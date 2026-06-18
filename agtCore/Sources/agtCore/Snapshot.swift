@@ -47,10 +47,15 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     public var id: UUID
     public var customName: String?
     public var cwd: String
+    /// Whether the session was shown as a vertical split. Optional for backward compat:
+    /// a session snapshot written before this field decodes as nil (→ not split). On
+    /// restore the split pane re-spawns a fresh shell, like the primary.
+    public var isSplit: Bool?
 
-    public init(id: UUID, customName: String?, cwd: String) {
+    public init(id: UUID, customName: String?, cwd: String, isSplit: Bool? = nil) {
         self.id = id
         self.customName = customName
         self.cwd = cwd
+        self.isSplit = isSplit
     }
 }

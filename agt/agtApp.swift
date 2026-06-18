@@ -18,7 +18,11 @@ struct agtApp: App {
 
     var body: some Scene {
         Window("agt", id: "main") {
-            ContentView(store: store) { Self.makeSurface(for: $0, store: store, service: gitStatusService) }
+            ContentView(
+                store: store,
+                makeSurface: { Self.makeSurface(for: $0, store: store, service: gitStatusService) },
+                makeSplitSurface: { Self.makeSplitSurface(for: $0, store: store) }
+            )
                 .frame(minWidth: 640, minHeight: 400)
                 .task {
                     appDelegate.store = store
@@ -76,6 +80,20 @@ struct agtApp: App {
         let sessionID = session.id
         view.onExit = { store.closeSession(sessionID) }
         view.onCwdChange = { service.requestRefresh(sessionID: sessionID) }
+        view.onFocusChange = { focused in if focused { store.session(withID: sessionID)?.splitFocused = false } }
+        return view
+    }
+
+    /// Split-pane surface factory: a second independent login shell in the session's
+    /// current directory. Deliberately NOT wired to the session (no `view.session`) so its
+    /// PWD reports don't clobber the session's cwd/git, and on shell exit it closes just
+    /// the split (hide + teardown), not the whole session.
+    @MainActor
+    private static func makeSplitSurface(for session: Session, store: AppStore) -> GhosttySurfaceView {
+        let view = GhosttySurfaceView(workingDirectory: session.effectiveCwd)
+        let sessionID = session.id
+        view.onExit = { store.closeSplit(sessionID) }
+        view.onFocusChange = { focused in if focused { store.session(withID: sessionID)?.splitFocused = true } }
         return view
     }
 }

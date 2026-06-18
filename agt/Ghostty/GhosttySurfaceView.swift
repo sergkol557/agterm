@@ -33,6 +33,10 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
     /// here — this fires on every cd/prompt redraw.
     var onCwdChange: (() -> Void)?
 
+    /// Called on the main actor when this surface gains (`true`) or loses (`false`) first
+    /// responder, so the app can track which split pane is active. Set by the factory.
+    var onFocusChange: ((Bool) -> Void)?
+
     /// Heap buffers backing the `const char*` fields of the surface config —
     /// notably `initial_input`, which libghostty writes to the pty
     /// asynchronously after the child spawns, so the buffer must outlive
@@ -215,6 +219,7 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
         if result, let surface {
             isFocused = true
             ghostty_surface_set_focus(surface, true)
+            onFocusChange?(true)
         }
         return result
     }
@@ -224,6 +229,7 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
         if result, let surface {
             isFocused = false
             ghostty_surface_set_focus(surface, false)
+            onFocusChange?(false)
         }
         return result
     }

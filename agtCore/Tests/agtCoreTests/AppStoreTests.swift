@@ -137,6 +137,40 @@ struct AppStoreTests {
         #expect(surface.teardownCount == 1)
     }
 
+    @Test func closeSessionTearsDownSplitSurface() {
+        let store = Self.makeStore()
+        let ws = store.addWorkspace(name: "work")
+        let session = store.addSession(toWorkspace: ws.id, cwd: "/a")!
+        let split = SpySurface()
+        session.splitSurface = split
+        store.closeSession(session.id)
+        #expect(split.teardownCount == 1)
+    }
+
+    @Test func toggleSplitFlipsFlag() {
+        let store = Self.makeStore()
+        let ws = store.addWorkspace(name: "work")
+        let session = store.addSession(toWorkspace: ws.id, cwd: "/a")!
+        #expect(session.isSplit == false)
+        store.toggleSplit(session.id)
+        #expect(session.isSplit == true)
+        store.toggleSplit(session.id)
+        #expect(session.isSplit == false)
+    }
+
+    @Test func closeSplitHidesAndTearsDownSurface() {
+        let store = Self.makeStore()
+        let ws = store.addWorkspace(name: "work")
+        let session = store.addSession(toWorkspace: ws.id, cwd: "/a")!
+        session.isSplit = true
+        let split = SpySurface()
+        session.splitSurface = split
+        store.closeSplit(session.id)
+        #expect(session.isSplit == false)
+        #expect(session.splitSurface == nil)
+        #expect(split.teardownCount == 1)
+    }
+
     @Test func closeUnknownSessionIsIgnored() {
         let store = Self.makeStore()
         let ws = store.addWorkspace(name: "work")

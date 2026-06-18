@@ -88,7 +88,27 @@ public final class AppStore {
         let wasActive = selectedSessionID == sessionID
         let removed = workspaces[location.workspaceIndex].sessions.remove(at: location.sessionIndex)
         removed.surface?.teardown()
+        removed.splitSurface?.teardown()
         if wasActive { selectedSessionID = reselectionTarget(after: location) }
+        save()
+    }
+
+    /// Toggles the one-level split for a session. The second pane's surface is created
+    /// lazily by the detail pane on first show and kept alive when hidden, so this only
+    /// flips the flag. The flag is persisted, so the split is restored on relaunch.
+    public func toggleSplit(_ sessionID: UUID) {
+        guard let session = session(withID: sessionID) else { return }
+        session.isSplit.toggle()
+        save()
+    }
+
+    /// Closes the split pane: hides it AND tears down its surface, so a subsequent split
+    /// starts a fresh shell. Used when the split shell exits on its own.
+    public func closeSplit(_ sessionID: UUID) {
+        guard let session = session(withID: sessionID) else { return }
+        session.isSplit = false
+        session.splitSurface?.teardown()
+        session.splitSurface = nil
         save()
     }
 
@@ -125,7 +145,7 @@ public final class AppStore {
     public func snapshot() -> Snapshot {
         let workspaceSnapshots = workspaces.map { workspace in
             WorkspaceSnapshot(id: workspace.id, name: workspace.name, sessions: workspace.sessions.map { session in
-                SessionSnapshot(id: session.id, customName: session.customName, cwd: session.currentCwd ?? session.initialCwd)
+                SessionSnapshot(id: session.id, customName: session.customName, cwd: session.currentCwd ?? session.initialCwd, isSplit: session.isSplit)
             })
         }
         return Snapshot(selectedSessionID: selectedSessionID, workspaces: workspaceSnapshots, statusBarHidden: statusBarHidden)
@@ -142,8 +162,10 @@ public final class AppStore {
     public func restore(from snapshot: Snapshot) {
         statusBarHidden = snapshot.statusBarHidden ?? false
         workspaces = snapshot.workspaces.map { workspaceSnapshot in
-            let sessions = workspaceSnapshot.sessions.map { sessionSnapshot in
-                Session(id: sessionSnapshot.id, initialCwd: sessionSnapshot.cwd, customName: sessionSnapshot.customName)
+            let sessions = workspaceSnapshot.sessions.map { sessionSnapshot -> Session in
+                let session = Session(id: sessionSnapshot.id, initialCwd: sessionSnapshot.cwd, customName: sessionSnapshot.customName)
+                session.isSplit = sessionSnapshot.isSplit ?? false
+                return session
             }
             return Workspace(id: workspaceSnapshot.id, name: workspaceSnapshot.name, sessions: sessions)
         }

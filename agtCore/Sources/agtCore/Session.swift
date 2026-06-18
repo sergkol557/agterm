@@ -30,6 +30,19 @@ public final class Session: Identifiable {
     /// display and owned here so it survives sidebar/detail view churn.
     @ObservationIgnored public var surface: (any TerminalSurface)?
 
+    /// Whether the session is shown as a one-level vertical split (two panes side by
+    /// side). Observed, so the detail pane shows/hides the second pane when toggled.
+    public var isSplit: Bool = false
+
+    /// While split, whether the split (second) pane holds focus rather than the primary.
+    /// Observed, so the detail pane can dim the inactive pane. Meaningless when not split.
+    public var splitFocused: Bool = false
+
+    /// The second pane's surface, lazily created on first split. `@ObservationIgnored`
+    /// like `surface`; it survives view churn, so hiding the split keeps the shell alive
+    /// rather than destroying it. Freed only on `closeSplit`/`closeSession`.
+    @ObservationIgnored public var splitSurface: (any TerminalSurface)?
+
     public init(id: UUID = UUID(), initialCwd: String, customName: String? = nil) {
         self.id = id
         self.initialCwd = initialCwd

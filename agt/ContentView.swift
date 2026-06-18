@@ -13,6 +13,7 @@ import SwiftUI
 struct ContentView: View {
     @Bindable var store: AppStore
     let makeSurface: (Session) -> GhosttySurfaceView
+    let makeSplitSurface: (Session) -> GhosttySurfaceView
 
     var body: some View {
         NavigationSplitView {
@@ -42,16 +43,33 @@ struct ContentView: View {
         // driven through SwiftUI so it isn't clobbered by NavigationSplitView.
         .navigationTitle(windowTitle)
         .navigationSubtitle(windowSubtitle)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) { splitButton }
+        }
         // blend the title bar with the terminal; surface the window un-minimized on launch.
         // the title token makes updateNSView re-run the blend on a session switch.
         .background(WindowAccessor(titleToken: windowTitle))
     }
 
-    /// The active session's terminal, or a placeholder when nothing is selected.
+    /// The active session's terminal, or a placeholder when nothing is selected. When the
+    /// session is split, the primary and split surfaces sit side by side in an `HSplitView`
+    /// (a draggable vertical divider). Hiding the split removes the second `TerminalView`;
+    /// its surface survives (owned by the session), so the shell isn't destroyed.
     @ViewBuilder private var detailPane: some View {
         if let active = store.activeSession {
-            TerminalView(session: active, makeSurface: makeSurface)
-                .id(active.id)
+            if active.isSplit {
+                HSplitView {
+                    TerminalView(session: active, surfaceKeyPath: \.surface, makeSurface: makeSurface)
+                        .overlay { paneDim(active.splitFocused) }
+                        .id(active.id)
+                    TerminalView(session: active, surfaceKeyPath: \.splitSurface, makeSurface: makeSplitSurface)
+                        .overlay { paneDim(!active.splitFocused) }
+                        .id("\(active.id.uuidString)-split")
+                }
+            } else {
+                TerminalView(session: active, surfaceKeyPath: \.surface, makeSurface: makeSurface)
+                    .id(active.id)
+            }
         } else {
             Text("No session selected")
                 .foregroundStyle(.secondary)
@@ -60,6 +78,15 @@ struct ContentView: View {
 
     /// A slim bottom status bar. Holds the active session's git status now and is the
     /// place for other info elements (the trailing area is intentionally left open).
+    /// A translucent dim over the inactive split pane so the active one stands out. Clicks
+    /// pass through (`allowsHitTesting(false)`) so the dimmed pane can still be focused;
+    /// `dimmed == false` renders nothing.
+    @ViewBuilder private func paneDim(_ dimmed: Bool) -> some View {
+        if dimmed {
+            Color.black.opacity(0.12).allowsHitTesting(false)
+        }
+    }
+
     private var statusBar: some View {
         HStack(spacing: 10) {
             Spacer(minLength: 0)
@@ -94,6 +121,39 @@ struct ContentView: View {
     /// The titlebar subtitle (second line): the active session's working directory.
     private var windowSubtitle: String {
         store.activeSession?.effectiveCwd ?? ""
+    }
+
+    /// Toolbar button (right of the title bar) that toggles the active session's one-level
+    /// vertical split: first press shows the second pane, the next hides it.
+    private var splitButton: some View {
+        let isSplit = store.activeSession?.isSplit ?? false
+        return Button {
+            guard let session = store.activeSession else { return }
+            store.toggleSplit(session.id)
+            // move focus to the pane that should now be active: the split (right) pane on
+            // open, the primary on close.
+            focusSplitPane(session, wantSplit: session.isSplit)
+        } label: {
+            Image(systemName: "rectangle.split.2x1")
+        }
+        .help(isSplit ? "Hide split" : "Split right")
+        .disabled(store.activeSession == nil)
+        .accessibilityIdentifier("split-toggle")
+    }
+
+    /// Make the target split pane first responder. Re-asserts on the run loop for a short
+    /// window (not just once): on open the split surface materializes a beat after the
+    /// toggle, and on close the HSplitView collapse churns the primary view and would drop
+    /// a one-shot focus — re-asserting survives both.
+    @MainActor private func focusSplitPane(_ session: Session, wantSplit: Bool, attempt: Int = 0) {
+        if let view = (wantSplit ? session.splitSurface : session.surface) as? GhosttySurfaceView,
+           let window = view.window {
+            window.makeFirstResponder(view)
+        }
+        guard attempt < 12 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
+            focusSplitPane(session, wantSplit: wantSplit, attempt: attempt + 1)
+        }
     }
 
     /// Two distinct add controls, source-list style: add a workspace, and a menu

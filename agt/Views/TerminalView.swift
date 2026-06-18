@@ -15,18 +15,21 @@ import SwiftUI
 /// but the session-owned surfaces stay alive.
 struct TerminalView: NSViewRepresentable {
     let session: Session
-    /// Lazily creates a `GhosttySurfaceView` for the session and stores it on
-    /// `session.surface`. Supplied by the app target.
+    /// Which surface slot this view binds to: the primary `\.surface` or the split
+    /// `\.splitSurface`. Lets one representable host either pane.
+    let surfaceKeyPath: ReferenceWritableKeyPath<Session, (any TerminalSurface)?>
+    /// Lazily creates a `GhosttySurfaceView` for the session and stores it in the slot.
+    /// Supplied by the app target (a primary or split factory).
     let makeSurface: (Session) -> GhosttySurfaceView
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context _: Context) -> GhosttySurfaceView {
-        if let existing = session.surface as? GhosttySurfaceView {
+        if let existing = session[keyPath: surfaceKeyPath] as? GhosttySurfaceView {
             return existing
         }
         let view = makeSurface(session)
-        session.surface = view
+        session[keyPath: surfaceKeyPath] = view
         return view
     }
 
