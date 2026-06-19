@@ -55,6 +55,40 @@ struct ControlResolveTests {
         #expect(ControlResolve.resolve("", candidates: [a], active: nil) == .notFound)
     }
 
+    // window-id targets reuse the same pure resolver: candidates are window ids, active is the
+    // frontmost window. No window-specific resolver function exists — the cross-window
+    // session->store mapping is app-side ControlServer logic (Task 7), not a resolve concern.
+    private let w1 = UUID(uuidString: "0A11AAAA-0000-0000-0000-000000000011")!
+    private let w2 = UUID(uuidString: "0A22BBBB-0000-0000-0000-000000000012")!
+    private let w3 = UUID(uuidString: "7B33CCCC-0000-0000-0000-000000000013")!
+
+    @Test func windowActiveResolvesToFrontmost() {
+        let result = ControlResolve.resolve("active", candidates: [w1, w2, w3], active: w2)
+        #expect(result == .resolved(w2))
+    }
+
+    @Test func windowExactUUIDResolves() {
+        let result = ControlResolve.resolve(w1.uuidString, candidates: [w1, w2, w3], active: nil)
+        #expect(result == .resolved(w1))
+    }
+
+    @Test func windowUniquePrefixResolves() {
+        // "7b33" is unique to w3
+        let result = ControlResolve.resolve("7b33", candidates: [w1, w2, w3], active: nil)
+        #expect(result == .resolved(w3))
+    }
+
+    @Test func windowAmbiguousPrefixListsHits() {
+        // "0a" matches both w1 and w2
+        let result = ControlResolve.resolve("0a", candidates: [w1, w2, w3], active: nil)
+        #expect(result == .ambiguous([w1, w2]))
+    }
+
+    @Test func windowNoMatchIsNotFound() {
+        let result = ControlResolve.resolve("deadbeef", candidates: [w1, w2, w3], active: nil)
+        #expect(result == .notFound)
+    }
+
     @Test func socketPathWithStateDir() {
         let path = ControlResolve.socketPath(stateDir: "/tmp/agt-state", appSupport: "/Users/x/Library/Application Support/agt")
         #expect(path == "/tmp/agt-state/agt.sock")

@@ -23,6 +23,12 @@ public enum Command: String, Codable, Sendable {
     case fontInc = "font.inc"
     case fontDec = "font.dec"
     case fontReset = "font.reset"
+    case windowNew = "window.new"
+    case windowList = "window.list"
+    case windowSelect = "window.select"
+    case windowClose = "window.close"
+    case windowRename = "window.rename"
+    case windowDelete = "window.delete"
 }
 
 /// A bag of optional command parameters. Each command reads only the fields it needs; the rest stay
@@ -45,9 +51,13 @@ public struct ControlArgs: Codable, Sendable, Equatable {
     /// Whether `session.overlay.open` keeps the overlay open after its command exits (showing the
     /// "press any key to close" prompt) instead of closing immediately.
     public var wait: Bool?
+    /// Target window for session/workspace/tree/font commands: id / prefix / `active` (=frontmost).
+    /// Selects the window whose tree the command operates on.
+    public var window: String?
 
     public init(name: String? = nil, cwd: String? = nil, workspace: String? = nil, text: String? = nil,
-                select: Bool? = nil, mode: String? = nil, command: String? = nil, wait: Bool? = nil) {
+                select: Bool? = nil, mode: String? = nil, command: String? = nil, wait: Bool? = nil,
+                window: String? = nil) {
         self.name = name
         self.cwd = cwd
         self.workspace = workspace
@@ -56,6 +66,7 @@ public struct ControlArgs: Codable, Sendable, Equatable {
         self.mode = mode
         self.command = command
         self.wait = wait
+        self.window = window
     }
 }
 
@@ -116,17 +127,35 @@ public struct ControlTree: Codable, Sendable, Equatable {
     }
 }
 
+/// A window as projected into the `window.list` response. `open` is whether its on-screen window is
+/// up; `active` is whether it is the frontmost window.
+public struct ControlWindowNode: Codable, Sendable, Equatable {
+    public let id: String
+    public let name: String
+    public let open: Bool
+    public let active: Bool
+
+    public init(id: String, name: String, open: Bool, active: Bool) {
+        self.id = id
+        self.name = name
+        self.open = open
+        self.active = active
+    }
+}
+
 /// The successful payload: a new/affected id for mutating commands, a tree for `tree`, the selected text
 /// for `session.copy`. All optional.
 public struct ControlResult: Codable, Sendable, Equatable {
     public var id: String?
     public var tree: ControlTree?
     public var text: String?
+    public var windows: [ControlWindowNode]?
 
-    public init(id: String? = nil, tree: ControlTree? = nil, text: String? = nil) {
+    public init(id: String? = nil, tree: ControlTree? = nil, text: String? = nil, windows: [ControlWindowNode]? = nil) {
         self.id = id
         self.tree = tree
         self.text = text
+        self.windows = windows
     }
 }
 

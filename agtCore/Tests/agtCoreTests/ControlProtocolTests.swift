@@ -80,6 +80,27 @@ struct ControlProtocolTests {
         }
     }
 
+    @Test func windowCommandsRoundTrip() throws {
+        let cases: [ControlRequest] = [
+            ControlRequest(cmd: .windowNew, args: ControlArgs(name: "work")),
+            ControlRequest(cmd: .windowList),
+            ControlRequest(cmd: .windowSelect, target: "9f3c"),
+            ControlRequest(cmd: .windowClose, target: "9f3c"),
+            ControlRequest(cmd: .windowRename, target: "active", args: ControlArgs(name: "renamed")),
+            ControlRequest(cmd: .windowDelete, target: "9f3c"),
+        ]
+        for request in cases {
+            #expect(try roundTrip(request) == request)
+        }
+    }
+
+    @Test func sessionCommandWithWindowArgRoundTrips() throws {
+        let request = ControlRequest(cmd: .sessionSelect, target: "9f3c", args: ControlArgs(window: "main"))
+        let decoded = try roundTrip(request)
+        #expect(decoded == request)
+        #expect(decoded.args?.window == "main")
+    }
+
     @Test func requestUsesExpectedWireFieldNames() throws {
         let request = ControlRequest(cmd: .sessionType, target: "9f3c", args: ControlArgs(text: "ls\n", select: true))
         let json = try #require(String(data: JSONEncoder().encode(request), encoding: .utf8))
@@ -111,6 +132,32 @@ struct ControlProtocolTests {
         let decoded = try roundTrip(response)
         #expect(decoded == response)
         #expect(decoded.result?.text == "selected\nlines")
+    }
+
+    @Test func responseOkWithWindowsRoundTrips() throws {
+        let windows = [
+            ControlWindowNode(id: "w1", name: "work", open: true, active: true),
+            ControlWindowNode(id: "w2", name: "personal", open: false, active: false),
+        ]
+        let response = ControlResponse(ok: true, result: ControlResult(windows: windows))
+        let decoded = try roundTrip(response)
+        #expect(decoded == response)
+        #expect(decoded.result?.windows?.count == 2)
+        #expect(decoded.result?.windows?.first?.name == "work")
+        #expect(decoded.result?.windows?.first?.open == true)
+        #expect(decoded.result?.windows?.first?.active == true)
+        #expect(decoded.result?.windows?.last?.open == false)
+    }
+
+    @Test func windowsResultUsesExpectedWireFieldNames() throws {
+        let windows = [ControlWindowNode(id: "w1", name: "work", open: true, active: false)]
+        let response = ControlResponse(ok: true, result: ControlResult(windows: windows))
+        let json = try #require(String(data: JSONEncoder().encode(response), encoding: .utf8))
+        #expect(json.contains("\"windows\":"))
+        #expect(json.contains("\"id\":\"w1\""))
+        #expect(json.contains("\"name\":\"work\""))
+        #expect(json.contains("\"open\":true"))
+        #expect(json.contains("\"active\":false"))
     }
 
     @Test func responseErrorRoundTrips() throws {

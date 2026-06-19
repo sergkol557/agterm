@@ -4,23 +4,31 @@ import Testing
 
 struct NotificationsTests {
     @Test func identityRoundTripsForEveryPane() {
-        let id = UUID()
+        let windowID = UUID()
+        let sessionID = UUID()
         for pane in PaneRole.allCases {
-            let identity = TerminalNotification.identity(sessionID: id, pane: pane)
+            let identity = TerminalNotification.identity(windowID: windowID, sessionID: sessionID, pane: pane)
             let parsed = TerminalNotification.parseIdentity(identity)
-            #expect(parsed?.sessionID == id)
+            #expect(parsed?.windowID == windowID)
+            #expect(parsed?.sessionID == sessionID)
             #expect(parsed?.pane == pane)
         }
     }
 
-    @Test func identityFormatIsSessionColonRole() {
-        let id = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
-        #expect(TerminalNotification.identity(sessionID: id, pane: .split) == "11111111-1111-1111-1111-111111111111:split")
+    @Test func identityFormatIsWindowColonSessionColonRole() {
+        let windowID = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
+        let sessionID = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
+        let identity = TerminalNotification.identity(windowID: windowID, sessionID: sessionID, pane: .split)
+        #expect(identity == "00000000-0000-0000-0000-000000000000:11111111-1111-1111-1111-111111111111:split")
     }
 
     @Test func parseRejectsMalformed() {
-        #expect(TerminalNotification.parseIdentity("not-a-uuid:main") == nil)
-        #expect(TerminalNotification.parseIdentity("\(UUID().uuidString):bogus") == nil)
+        let win = UUID().uuidString
+        let sess = UUID().uuidString
+        #expect(TerminalNotification.parseIdentity("\(win):not-a-uuid:main") == nil)
+        #expect(TerminalNotification.parseIdentity("\(win):\(sess):bogus") == nil)
+        #expect(TerminalNotification.parseIdentity("not-a-uuid:\(sess):main") == nil)
+        #expect(TerminalNotification.parseIdentity("\(sess):main") == nil) // missing windowID
         #expect(TerminalNotification.parseIdentity("no-colon") == nil)
         #expect(TerminalNotification.parseIdentity("") == nil)
     }

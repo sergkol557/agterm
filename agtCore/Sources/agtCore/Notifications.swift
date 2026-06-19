@@ -12,20 +12,25 @@ public enum PaneRole: String, Codable, Sendable, CaseIterable {
 /// a system notification back to a session/pane, and the suppression rule. Host-free and unit-tested;
 /// the app target's `NotificationManager` builds the actual `UNNotificationRequest` from these.
 public enum TerminalNotification {
-    /// The notification's identity, `"<sessionID>:<paneRole>"`. Repeated notifications from the same
-    /// pane share it, so the OS replaces the prior banner instead of stacking duplicates.
-    public static func identity(sessionID: UUID, pane: PaneRole) -> String {
-        "\(sessionID.uuidString):\(pane.rawValue)"
+    /// The notification's identity, `"<windowID>:<sessionID>:<paneRole>"`. Repeated notifications
+    /// from the same pane share it, so the OS replaces the prior banner instead of stacking
+    /// duplicates. The windowID lets a click reopen the owning window when it was closed since the
+    /// banner fired (the firing surface is always in an open window at fire time, so it is known).
+    public static func identity(windowID: UUID, sessionID: UUID, pane: PaneRole) -> String {
+        "\(windowID.uuidString):\(sessionID.uuidString):\(pane.rawValue)"
     }
 
-    /// Parses an `identity(sessionID:pane:)` string back into its parts, or nil if malformed. Splits
-    /// on the LAST colon: a UUID string contains none, so the suffix is always the role.
-    public static func parseIdentity(_ identity: String) -> (sessionID: UUID, pane: PaneRole)? {
-        guard let separator = identity.lastIndex(of: ":") else { return nil }
-        let idPart = String(identity[..<separator])
-        let rolePart = String(identity[identity.index(after: separator)...])
-        guard let sessionID = UUID(uuidString: idPart), let pane = PaneRole(rawValue: rolePart) else { return nil }
-        return (sessionID, pane)
+    /// Parses an `identity(windowID:sessionID:pane:)` string back into its parts, or nil if
+    /// malformed. The role is the suffix after the last colon; the two UUID strings (no colons of
+    /// their own) precede it, window id first.
+    public static func parseIdentity(_ identity: String) -> (windowID: UUID, sessionID: UUID, pane: PaneRole)? {
+        let parts = identity.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count == 3,
+              let windowID = UUID(uuidString: String(parts[0])),
+              let sessionID = UUID(uuidString: String(parts[1])),
+              let pane = PaneRole(rawValue: String(parts[2]))
+        else { return nil }
+        return (windowID, sessionID, pane)
     }
 
     /// Whether a notification should be delivered (banner + badge). Suppressed only when the firing

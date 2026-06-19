@@ -9,14 +9,16 @@ import Foundation
 /// the caller. `save(_:)` writes atomically (temp file then replace).
 public struct PersistenceStore {
     private let directory: URL
-    private let fileName = "workspaces.json"
+    private let fileName: String
 
     private var fileURL: URL { directory.appendingPathComponent(fileName) }
 
     /// Creates a store rooted at `directory`, defaulting to the app's Application
-    /// Support directory.
-    public init(directory: URL = PersistenceStore.defaultDirectory) {
+    /// Support directory. `fileName` defaults to `workspaces.json`; a per-window
+    /// store overrides it to target `windows/<id>.json`.
+    public init(directory: URL = PersistenceStore.defaultDirectory, fileName: String = "workspaces.json") {
         self.directory = directory
+        self.fileName = fileName
     }
 
     /// `~/Library/Application Support/agt`.
