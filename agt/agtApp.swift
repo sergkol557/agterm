@@ -8,7 +8,6 @@ struct agtApp: App {
     private var appDelegate
 
     @State private var store: AppStore
-    @State private var gitStatusService: GitStatusService
     @State private var actions: AppActions
     @State private var palette = PaletteController()
     @State private var sessionSwitcher: SessionSwitcher
@@ -18,7 +17,6 @@ struct agtApp: App {
     init() {
         let store = agtApp.restoredStore()
         _store = State(initialValue: store)
-        _gitStatusService = State(initialValue: GitStatusService(store: store))
         let actions = AppActions(store: store)
         _actions = State(initialValue: actions)
         _controlServer = State(initialValue: ControlServer(store: store, actions: actions))
@@ -33,7 +31,7 @@ struct agtApp: App {
         Window("agt", id: "main") {
             ContentView(
                 store: store,
-                makeSurface: { Self.makeSurface(for: $0, store: store, service: gitStatusService) },
+                makeSurface: { Self.makeSurface(for: $0, store: store) },
                 makeSplitSurface: { Self.makeSplitSurface(for: $0, store: store) },
                 makeOverlaySurface: { Self.makeOverlaySurface(for: $0, store: store) },
                 quickTerminal: QuickTerminalController.shared,
@@ -59,14 +57,6 @@ struct agtApp: App {
                     // hand it the action hub so a banner click can navigate to the firing pane.
                     NotificationManager.shared.actions = actions
                     NotificationManager.shared.start()
-                    // start the active-session refresh loop + focus observers once
-                    // the scene appears (idempotent if the task re-runs).
-                    gitStatusService.start()
-                }
-                // refresh git status for the active session whenever the selection
-                // changes, so the result is observable as soon as a session is shown.
-                .onChange(of: store.selectedSessionID, initial: true) {
-                    gitStatusService.refreshActive()
                 }
         }
         .defaultSize(width: 900, height: 600)
@@ -108,11 +98,6 @@ struct agtApp: App {
                     .keyboardShortcut("-", modifiers: .command)
                 Button { actions.resetFontSize() } label: { Label("Actual Size", systemImage: "textformat.size") }
                     .keyboardShortcut("0", modifiers: .command)
-                Divider()
-                Button { store.setStatusBarHidden(!store.statusBarHidden) } label: {
-                    Label(store.statusBarHidden ? "Show Status Bar" : "Hide Status Bar", systemImage: "rectangle.bottomthird.inset.filled")
-                }
-                .keyboardShortcut("/", modifiers: .command)
                 Divider()
                 Button { actions.toggleSplit() } label: {
                     Label(store.activeSession?.isSplit == true ? "Hide Split" : "Split Right", systemImage: "rectangle.split.2x1")
@@ -157,12 +142,11 @@ struct agtApp: App {
     /// a login shell in the session's initial working directory. On shell exit the
     /// view calls back to close the owning session in the store.
     @MainActor
-    private static func makeSurface(for session: Session, store: AppStore, service: GitStatusService) -> GhosttySurfaceView {
+    private static func makeSurface(for session: Session, store: AppStore) -> GhosttySurfaceView {
         let view = GhosttySurfaceView(workingDirectory: session.initialCwd, fontSize: session.fontSize.map(Float.init))
         view.session = session
         let sessionID = session.id
         view.onExit = { store.closeSession(sessionID) }
-        view.onCwdChange = { service.requestRefresh(sessionID: sessionID) }
         view.onFocusChange = { focused in
             guard focused else { return }
             store.session(withID: sessionID)?.splitFocused = false
@@ -176,7 +160,7 @@ struct agtApp: App {
 
     /// Split-pane surface factory: a second independent login shell in the session's
     /// current directory. Deliberately NOT wired to the session (no `view.session`) so its
-    /// PWD reports don't clobber the session's cwd/git, and on shell exit it closes just
+    /// PWD reports don't clobber the session's cwd, and on shell exit it closes just
     /// the split (hide + teardown), not the whole session.
     @MainActor
     private static func makeSplitSurface(for session: Session, store: AppStore) -> GhosttySurfaceView {
@@ -197,7 +181,7 @@ struct agtApp: App {
     /// Overlay-terminal surface factory: an ephemeral surface running the session's `overlayCommand`
     /// as its process in `overlayCwd` (default the session's current dir). Like the split, it is NOT
     /// wired to the session (no `view.session`), so its PWD reports don't clobber the session's
-    /// cwd/git. When the command exits, the surface's process-exit fires `onExit` → `closeOverlay`,
+    /// cwd. When the command exits, the surface's process-exit fires `onExit` → `closeOverlay`,
     /// which tears the surface down and hides the overlay — so the program's exit makes it vanish.
     @MainActor
     private static func makeOverlaySurface(for session: Session, store: AppStore) -> GhosttySurfaceView {

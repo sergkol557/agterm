@@ -201,8 +201,8 @@ final class GhosttyApp {
 
 extension Notification.Name {
     /// Posted after the ghostty config is reloaded from a settings change, so the SwiftUI chrome
-    /// (status bar) and the AppKit window appearance (title bar + window background → sidebar)
-    /// re-read the new `GhosttyApp.terminalBackgroundColor` immediately instead of waiting for the
-    /// window to re-key.
+    /// (the quick terminal backing) and the AppKit window appearance (title bar + window background →
+    /// sidebar) re-read the new `GhosttyApp.terminalBackgroundColor` immediately instead of waiting
+    /// for the window to re-key.
     static let agtAppearanceChanged = Notification.Name("agt.appearanceChanged")
 }

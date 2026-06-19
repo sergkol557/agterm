@@ -43,8 +43,8 @@ final class SettingsModel {
         }
         applyWindowTranslucency()
         applyNotificationsEnabled()
-        // refresh the app chrome (status bar + title bar + sidebar) with the new terminal color and
-        // window translucency immediately, rather than only when the window next re-keys.
+        // refresh the app chrome (title bar + sidebar + quick terminal) with the new terminal color
+        // and window translucency immediately, rather than only when the window next re-keys.
         NotificationCenter.default.post(name: .agtAppearanceChanged, object: nil)
     }
 

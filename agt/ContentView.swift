@@ -20,13 +20,9 @@ struct ContentView: View {
     let palette: PaletteController
     let sessionSwitcher: SessionSwitcher
     /// The terminal background color, mirrored from the (non-observable) `GhosttyApp` into view
-    /// state and read by the status bar, so a settings theme change (posting `.agtAppearanceChanged`)
-    /// re-renders it live.
+    /// state and used as the quick terminal's opaque backing, so a settings theme change (posting
+    /// `.agtAppearanceChanged`) re-renders it live.
     @State private var terminalColor: Color = ContentView.resolvedTerminalColor()
-    /// The window background opacity, mirrored from `GhosttyApp` (re-read on `.agtAppearanceChanged`).
-    /// When < 1 the status bar paints nothing so the single translucent window background shows
-    /// through, keeping the whole interior a uniform translucent surface.
-    @State private var windowOpacity: Double = GhosttyApp.shared.windowOpacity
     /// Sidebar column visibility — only consulted on the isolated-UI-test path (see `splitRoot`),
     /// where it is pinned to `.doubleColumn`. Production never binds it, so its persisted collapse is
     /// untouched.
@@ -80,10 +76,9 @@ struct ContentView: View {
             if closed { actions.focusActiveSession() }
         }
         // a settings appearance change isn't observable through GhosttyApp, so re-render on the
-        // notification to pick up the new terminal color in the status bar.
+        // notification to pick up the new terminal color in the quick terminal backing.
         .onReceive(NotificationCenter.default.publisher(for: .agtAppearanceChanged)) { _ in
             terminalColor = ContentView.resolvedTerminalColor()
-            windowOpacity = GhosttyApp.shared.windowOpacity
         }
         // blend the title bar with the terminal; surface the window un-minimized on launch.
         // the title token makes updateNSView re-run the blend on a session switch.
@@ -132,14 +127,6 @@ struct ContentView: View {
                 .frame(height: 1)
             detailPane
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            if !store.statusBarHidden {
-                // hairline between the terminal and the status bar, matching the one
-                // under the title bar.
-                Rectangle()
-                    .fill(Color.white.opacity(0.1))
-                    .frame(height: 1)
-                statusBar
-            }
         }
     }
 
@@ -176,8 +163,6 @@ struct ContentView: View {
         }
     }
 
-    /// A slim bottom status bar. Holds the active session's git status now and is the
-    /// place for other info elements (the trailing area is intentionally left open).
     /// A translucent dim over the inactive split pane so the active one stands out. Clicks
     /// pass through (`allowsHitTesting(false)`) so the dimmed pane can still be focused;
     /// `dimmed == false` renders nothing.
@@ -187,29 +172,9 @@ struct ContentView: View {
         }
     }
 
-    private var statusBar: some View {
-        HStack(spacing: 10) {
-            Spacer(minLength: 0)
-            GitStatusPill(status: store.activeSession?.gitStatus)
-        }
-        // more bottom than top padding nudges the pill up a touch: the right-aligned pill sits by
-        // the window's rounded bottom-right corner, whose clipping makes a geometrically-centered
-        // pill read as slightly low. minHeight keeps the bar a consistent height when empty; the
-        // extra trailing inset keeps the content clear of that rounded corner.
-        .padding(.leading, 12)
-        .padding(.trailing, 20)
-        .padding(.top, 2.5)
-        .padding(.bottom, 5.5)
-        .frame(maxWidth: .infinity, minHeight: 22)
-        // blend with the terminal: same background, so the status bar reads as a continuation of it
-        // (separated only by the hairline above). When the window is translucent it paints nothing,
-        // letting the single translucent window background show through instead of a solid strip.
-        .background(windowOpacity < 1 ? Color.clear : terminalColor)
-    }
-
     /// The terminal background color from the ghostty config (a dark fallback if libghostty hasn't
-    /// reported one), used to blend the status bar with the terminal. Read into the `terminalColor`
-    /// view state so the status bar re-renders when the theme changes.
+    /// reported one), used as the quick terminal's opaque backing. Read into the `terminalColor`
+    /// view state so it re-renders when the theme changes.
     private static func resolvedTerminalColor() -> Color {
         Color(nsColor: GhosttyApp.shared.terminalBackgroundColor
             ?? NSColor(srgbRed: 0.157, green: 0.173, blue: 0.204, alpha: 1))

@@ -35,7 +35,7 @@ public struct Agtctl: ParsableCommand {
     public static let configuration = CommandConfiguration(
         commandName: "agtctl",
         abstract: "Drive agt over its control socket.",
-        subcommands: [Tree.self, Workspace.self, Session.self, Quick.self, Font.self, Statusbar.self]
+        subcommands: [Tree.self, Workspace.self, Session.self, Quick.self, Font.self]
     )
 
     public init() {}
@@ -297,17 +297,5 @@ struct Font: ParsableCommand {
         @OptionGroup var options: ClientOptions
 
         func makeRequest() throws -> ControlRequest { ControlRequest(cmd: .fontReset, target: target.target) }
-    }
-}
-
-// MARK: - statusbar
-
-struct Statusbar: RequestCommand {
-    static let configuration = CommandConfiguration(abstract: "Status bar (on|off|toggle).")
-    @Argument(help: "Mode: on, off, or toggle (default).") var mode: String = "toggle"
-    @OptionGroup var options: ClientOptions
-
-    func makeRequest() throws -> ControlRequest {
-        ControlRequest(cmd: .statusbar, args: ControlArgs(mode: mode))
     }
 }

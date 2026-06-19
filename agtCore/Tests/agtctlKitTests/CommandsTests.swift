@@ -139,10 +139,6 @@ struct CommandsTests {
         #expect(try request(["font", "reset"]) == ControlRequest(cmd: .fontReset, target: "active"))
     }
 
-    @Test func statusbarOff() throws {
-        #expect(try request(["statusbar", "off"]) == ControlRequest(cmd: .statusbar, args: ControlArgs(mode: "off")))
-    }
-
     @Test func invalidSubcommandFailsToParse() {
         #expect(throws: (any Error).self) { try Agtctl.parseAsRoot(["bogus"]) }
     }

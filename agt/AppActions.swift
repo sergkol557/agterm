@@ -53,10 +53,6 @@ final class AppActions {
         store.closeSession(id)
     }
 
-    func toggleStatusBar() {
-        store.setStatusBarHidden(!store.statusBarHidden)
-    }
-
     /// Delete a workspace and all of its sessions. Confirms first when the workspace still has
     /// sessions (the delete ends their shells); an empty workspace deletes without a prompt.
     /// No-ops when only one workspace remains — one is always kept.
@@ -129,7 +125,6 @@ final class AppActions {
             PaletteItem(title: "Increase Font Size") { [weak self] in self?.increaseFontSize() },
             PaletteItem(title: "Decrease Font Size") { [weak self] in self?.decreaseFontSize() },
             PaletteItem(title: "Actual Font Size") { [weak self] in self?.resetFontSize() },
-            PaletteItem(title: "Toggle Status Bar") { [weak self] in self?.toggleStatusBar() },
         ]
         if store.canRemoveWorkspace {
             items.append(PaletteItem(title: "Delete Workspace") { [weak self] in self?.deleteActiveWorkspace() })

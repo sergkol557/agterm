@@ -319,8 +319,6 @@ final class ControlServer {
             }
         case .quick:
             return setQuickTerminal(mode: request.args?.mode)
-        case .statusbar:
-            return setStatusBar(mode: request.args?.mode)
         case .fontInc:
             return font(request.target, action: "increase_font_size:1")
         case .fontDec:
@@ -371,23 +369,6 @@ final class ControlServer {
         }
         if want != controller.isVisible {
             if want { controller.show() } else { controller.hide() }
-        }
-        return ControlResponse(ok: true)
-    }
-
-    /// Show / hide / toggle the status bar, flipping only when the requested state differs from the
-    /// current `statusBarHidden` (`on` shows it → not hidden). An unknown mode is an error.
-    private func setStatusBar(mode: String?) -> ControlResponse {
-        let mode = mode ?? "toggle"
-        let wantHidden: Bool
-        switch mode {
-        case "on": wantHidden = false
-        case "off": wantHidden = true
-        case "toggle": wantHidden = !store.statusBarHidden
-        default: return ControlResponse(ok: false, error: "invalid statusbar mode: \(mode)")
-        }
-        if wantHidden != store.statusBarHidden {
-            store.setStatusBarHidden(wantHidden)
         }
         return ControlResponse(ok: true)
     }

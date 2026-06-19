@@ -23,7 +23,6 @@ public enum Command: String, Codable, Sendable {
     case fontInc = "font.inc"
     case fontDec = "font.dec"
     case fontReset = "font.reset"
-    case statusbar
 }
 
 /// A bag of optional command parameters. Each command reads only the fields it needs; the rest stay
@@ -39,7 +38,7 @@ public struct ControlArgs: Codable, Sendable, Equatable {
     public var text: String?
     /// Whether `session.type` may select a never-shown session to realize its surface.
     public var select: Bool?
-    /// Mode for `session.split` / `quick` / `statusbar` (`on|off|toggle`, `show|hide|toggle` for quick).
+    /// Mode for `session.split` / `quick` (`on|off|toggle`, `show|hide|toggle` for quick).
     public var mode: String?
     /// The program the overlay terminal runs for `session.overlay.open` (e.g. `revdiff`).
     public var command: String?

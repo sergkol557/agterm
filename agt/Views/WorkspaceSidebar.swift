@@ -6,15 +6,13 @@ import SwiftUI
 /// drags (within the outline) use this to identify the session being moved.
 private let sessionPasteboardType = NSPasteboard.PasteboardType("com.umputun.agt.session")
 
-/// An `NSTableCellView` with a leading icon, the name field, and a trailing token field.
+/// An `NSTableCellView` with a leading icon, the name field, and a trailing badge.
 /// The icon is the inherited `cell.imageView` (a filled folder for a workspace, an outlined
 /// terminal for a session), so AppKit re-tints it white on a selected row. The name field is `cell.textField`
-/// (rename and selection wiring operate on it); `tokenField` shows the session's
-/// `gitStatus?.compact` and stays whole while the name truncates first.
+/// (rename and selection wiring operate on it).
 private final class SidebarCellView: NSTableCellView {
-    let tokenField = NSTextField(labelWithString: "")
     /// Trailing unseen-notification count for the row (a session's `unseenCount`, or a collapsed
-    /// workspace's roll-up), drawn as a small accent capsule right of the git token. Hidden when 0.
+    /// workspace's roll-up), drawn as a small accent capsule. Hidden when 0.
     let badge = BadgeView()
 }
 
@@ -159,10 +157,10 @@ struct WorkspaceSidebar: NSViewRepresentable {
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         // touching the observed store properties here registers this representable
         // as an observer, so SwiftUI re-invokes updateNSView when the tree, selection,
-        // or any session's gitStatus changes. folding gitStatus into the read is what
-        // makes a status-only change re-invoke updateNSView; a touch inside viewFor
+        // or any session's unseen count changes. folding unseenCount into the read is what
+        // makes a badge-only change re-invoke updateNSView; a touch inside viewFor
         // would not register the dependency.
-        _ = store.workspaces.map { ($0.id, $0.name, $0.sessions.map { ($0.id, $0.gitStatus, $0.unseenCount) }) }
+        _ = store.workspaces.map { ($0.id, $0.name, $0.sessions.map { ($0.id, $0.unseenCount) }) }
         _ = store.selectedSessionID
         context.coordinator.reconcile()
         context.coordinator.syncSelection()
@@ -186,7 +184,7 @@ struct WorkspaceSidebar: NSViewRepresentable {
         /// re-entrant end-editing the cancel/commit path can trigger.
         private var committing = false
         /// Set while a rename field is the active first responder (between
-        /// `beginEditing` and `restore`), so a gitStatus tick can't reload the row out
+        /// `beginEditing` and `restore`), so a badge tick can't reload the row out
         /// from under the in-progress edit. `committing` covers only the end-editing
         /// instant; this covers the whole typing window.
         private var editing = false
@@ -194,13 +192,8 @@ struct WorkspaceSidebar: NSViewRepresentable {
         /// itself triggers (which would otherwise re-enter the store).
         private var applyingSelection = false
         /// Last-seen tree signature (workspace ids/names + per-session ids and display
-        /// names), used to tell a structural change from a gitStatus-only update.
+        /// names), used to tell a structural change from a badge-only update.
         private var lastTreeSignature: [TreeSignature] = []
-        /// Last-seen gitStatus per session id, used to find which rows changed so a
-        /// status-only update reloads just those rows instead of the whole outline.
-        /// Only non-nil statuses are stored; an absent key reads as nil via the
-        /// subscript, so a never-seen session and one last seen as nil compare equal.
-        private var lastSeenGitStatus: [UUID: GitStatus] = [:]
 
         /// Last-seen unseen-notification count per session and workspace id, so a reconcile reloads
         /// only the rows whose badge changed. An absent key reads as nil ≠ any real count.
@@ -235,10 +228,10 @@ struct WorkspaceSidebar: NSViewRepresentable {
 
         /// A workspace's structural signature: its id, name, and ordered sessions
         /// (id + display name). Equal signatures across an update mean the tree shape
-        /// and every visible name are unchanged, so a gitStatus-only delta can be
+        /// and every visible name are unchanged, so a badge-only delta can be
         /// reloaded per-row instead of via a full rebuild. Including the display name
         /// means a rename or a cwd-driven basename change forces a full rebuild that
-        /// refreshes the label, rather than being mistaken for a gitStatus-only update.
+        /// refreshes the label, rather than being mistaken for a badge-only update.
         private struct TreeSignature: Equatable {
             let id: UUID
             let name: String
@@ -253,8 +246,8 @@ struct WorkspaceSidebar: NSViewRepresentable {
         }
 
         /// Decides between a full rebuild (structural change: add/move/close/rename) and
-        /// a targeted per-row reload (gitStatus-only change). A status-only update during
-        /// an in-progress rename is skipped so a 3s git tick can't drop the edit.
+        /// a targeted per-row reload (badge-only change). A badge update during an
+        /// in-progress rename is skipped so a tick can't drop the edit.
         func reconcile() {
             let signature = store.workspaces.map { workspace in
                 TreeSignature(id: workspace.id, name: workspace.name,
@@ -263,41 +256,14 @@ struct WorkspaceSidebar: NSViewRepresentable {
             if signature != lastTreeSignature {
                 lastTreeSignature = signature
                 rebuildAndReload()
-                snapshotGitStatus()
                 snapshotBadges()
                 return
             }
-            reloadChangedGitStatusRows()
             reloadChangedBadgeRows()
         }
 
-        /// Reloads only the session rows whose `gitStatus` changed since the last
-        /// snapshot. Skipped while a rename is in progress (field is first responder)
-        /// or committing, so it can't reload a row out from under an in-progress edit.
-        private func reloadChangedGitStatusRows() {
-            guard let outline = outlineView, !committing, !editing else { return }
-            for workspace in store.workspaces {
-                for session in workspace.sessions {
-                    let current = session.gitStatus
-                    guard current != lastSeenGitStatus[session.id] else { continue }
-                    lastSeenGitStatus[session.id] = current
-                    if let node = nodeCache[session.id] { outline.reloadItem(node) }
-                }
-            }
-        }
-
-        /// Records the current gitStatus of every session so the next reconcile can
-        /// detect a status-only delta.
-        private func snapshotGitStatus() {
-            var snapshot: [UUID: GitStatus] = [:]
-            for workspace in store.workspaces {
-                for session in workspace.sessions { snapshot[session.id] = session.gitStatus }
-            }
-            lastSeenGitStatus = snapshot
-        }
-
         /// Reloads only the rows whose unseen-notification count changed — both the session row and
-        /// its workspace row (the roll-up). Skipped mid-rename, like the git-status reload.
+        /// its workspace row (the roll-up). Skipped mid-rename so it can't drop an in-progress edit.
         private func reloadChangedBadgeRows() {
             guard let outline = outlineView, !committing, !editing else { return }
             func reloadIfChanged(_ id: UUID, _ count: Int) {
@@ -460,8 +426,7 @@ struct WorkspaceSidebar: NSViewRepresentable {
             field.isEditable = false
             field.isBordered = false
             field.drawsBackground = false
-            // a recycled cell may carry the prior row's tokens/badge; reset before use
-            applyToken(toCell: cell, status: nil)
+            // a recycled cell may carry the prior row's badge; reset before use
             applyBadge(toCell: cell, count: 0)
             switch node.kind {
             case .workspace:
@@ -480,38 +445,11 @@ struct WorkspaceSidebar: NSViewRepresentable {
                 field.font = .preferredFont(forTextStyle: .body)
                 field.setAccessibilityIdentifier("session-row")
                 field.setAccessibilityLabel(nil)
-                applyToken(toCell: cell, status: gitStatus(forSession: node.id))
                 applyBadge(toCell: cell, count: store.session(withID: node.id)?.unseenCount ?? 0)
                 cell.imageView?.image = sessionIcon
                 cell.imageView?.setAccessibilityIdentifier("session-icon")
             }
             return cell
-        }
-
-        /// Renders `status?.compact` into the cell's trailing token field in
-        /// `secondaryLabelColor` and exposes the compact string via the `git-compact`
-        /// accessibility hook (identifier + value on the token field, plus the cell's
-        /// value) so a stretch XCUITest can assert it. An empty/`nil` compact collapses
-        /// the token (no width) so the name reclaims the full row and isn't pre-truncated.
-        private func applyToken(toCell cell: SidebarCellView, status: GitStatus?) {
-            let token = cell.tokenField
-            let compact = status?.compact ?? ""
-            guard !compact.isEmpty else {
-                token.attributedStringValue = NSAttributedString(string: "")
-                token.isHidden = true
-                token.setAccessibilityIdentifier(nil)
-                token.setAccessibilityValue(nil)
-                cell.setAccessibilityValue(nil)
-                return
-            }
-            token.isHidden = false
-            token.attributedStringValue = NSAttributedString(string: compact, attributes: [
-                .font: NSFont.preferredFont(forTextStyle: .caption1),
-                .foregroundColor: NSColor.secondaryLabelColor,
-            ])
-            token.setAccessibilityIdentifier("git-compact")
-            token.setAccessibilityValue(compact)
-            cell.setAccessibilityValue(compact)
         }
 
         /// Shows the unseen-notification `count` capsule on the row (hidden, zero-width when 0, so the
@@ -538,9 +476,9 @@ struct WorkspaceSidebar: NSViewRepresentable {
 
         /// Builds a view-based outline cell: an `SidebarCellView` with a leading icon
         /// (`cell.imageView`), the name `NSTextField` (`cell.textField`, editable on demand by
-        /// `beginEditing`), and a trailing token field for the git compact string. The name hugs
-        /// and resists compression weakly while the icon and token hug and resist strongly, so the
-        /// name truncates first and the icon and tokens stay whole.
+        /// `beginEditing`), and a trailing notification badge. The name hugs and resists compression
+        /// weakly while the icon and badge hug and resist strongly, so the name truncates first and
+        /// the icon and badge stay whole.
         private func makeCell(identifier: NSUserInterfaceItemIdentifier) -> SidebarCellView {
             let cell = SidebarCellView()
             cell.identifier = identifier
@@ -566,18 +504,6 @@ struct WorkspaceSidebar: NSViewRepresentable {
             cell.addSubview(field)
             cell.textField = field
 
-            let token = cell.tokenField
-            token.translatesAutoresizingMaskIntoConstraints = false
-            token.lineBreakMode = .byClipping
-            token.isEditable = false
-            token.isBordered = false
-            token.drawsBackground = false
-            token.focusRingType = .none
-            token.font = .preferredFont(forTextStyle: .caption1)
-            token.setContentHuggingPriority(.required, for: .horizontal)
-            token.setContentCompressionResistancePriority(.required, for: .horizontal)
-            cell.addSubview(token)
-
             let badge = cell.badge
             badge.translatesAutoresizingMaskIntoConstraints = false
             badge.setContentHuggingPriority(.required, for: .horizontal)
@@ -591,11 +517,9 @@ struct WorkspaceSidebar: NSViewRepresentable {
                 icon.heightAnchor.constraint(equalToConstant: 16),
                 field.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 6),
                 field.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-                // chain: name (flex) | git token | badge (trailing). both trailing items hug their
-                // content, so the name truncates first and they stay whole.
-                token.leadingAnchor.constraint(equalTo: field.trailingAnchor, constant: 6),
-                token.trailingAnchor.constraint(equalTo: badge.leadingAnchor, constant: -4),
-                token.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                // chain: name (flex) | badge (trailing). the badge hugs its content, so the name
+                // truncates first and the badge stays whole.
+                field.trailingAnchor.constraint(equalTo: badge.leadingAnchor, constant: -6),
                 badge.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -2),
                 badge.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             ])
@@ -604,10 +528,6 @@ struct WorkspaceSidebar: NSViewRepresentable {
 
         private func displayName(forSession id: UUID) -> String {
             store.session(withID: id)?.displayName ?? ""
-        }
-
-        private func gitStatus(forSession id: UUID) -> GitStatus? {
-            store.session(withID: id)?.gitStatus
         }
 
         // MARK: - Inline rename

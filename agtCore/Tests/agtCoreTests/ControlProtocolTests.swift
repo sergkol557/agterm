@@ -63,7 +63,6 @@ struct ControlProtocolTests {
         let cases: [ControlRequest] = [
             ControlRequest(cmd: .sessionSplit, target: "active", args: ControlArgs(mode: "toggle")),
             ControlRequest(cmd: .quick, args: ControlArgs(mode: "show")),
-            ControlRequest(cmd: .statusbar, args: ControlArgs(mode: "off")),
         ]
         for request in cases {
             #expect(try roundTrip(request) == request)

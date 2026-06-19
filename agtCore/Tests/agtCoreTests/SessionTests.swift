@@ -57,27 +57,6 @@ struct SessionTests {
         #expect(session.displayName == "build")
     }
 
-    @Test func gitStatusDefaultsToNil() {
-        let session = Session(initialCwd: "/Users/umputun/dev/foo")
-        #expect(session.gitStatus == nil)
-    }
-
-    @Test func gitStatusRoundTrips() {
-        let session = Session(initialCwd: "/Users/umputun/dev/foo")
-        let status = GitStatus(branch: "main", upstream: "origin/main", ahead: 5, behind: 2, dirty: 3)
-        session.gitStatus = status
-        #expect(session.gitStatus == status)
-        session.gitStatus = nil
-        #expect(session.gitStatus == nil)
-    }
-
-    @Test func displayNameIndependentOfGitStatus() {
-        let session = Session(initialCwd: "/Users/umputun/dev/foo")
-        #expect(session.displayName == "foo")
-        session.gitStatus = GitStatus(branch: "feature", ahead: 1, dirty: 4)
-        #expect(session.displayName == "foo")
-    }
-
     @Test func effectiveCwdFallsBackToInitialUntilPwdReport() {
         // a restored session has no currentCwd until OSC 7 arrives; effectiveCwd is
         // initialCwd so git status refreshes immediately on launch/select.

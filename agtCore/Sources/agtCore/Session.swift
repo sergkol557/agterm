@@ -5,9 +5,8 @@ import Observation
 ///
 /// `@MainActor` (so it's implicitly `Sendable` via isolation — never made an
 /// `actor`). The `surface` slot is `@ObservationIgnored` so assigning the
-/// lazily-created NSView never churns observation; `customName`/`currentCwd`/
-/// `gitStatus` are observed, so the sidebar refreshes when a rename, PWD report,
-/// or git-status update lands.
+/// lazily-created NSView never churns observation; `customName`/`currentCwd` are
+/// observed, so the sidebar refreshes when a rename or PWD report lands.
 @Observable
 @MainActor
 public final class Session: Identifiable {
@@ -20,11 +19,6 @@ public final class Session: Identifiable {
     /// changes since the last structural mutation.
     public var currentCwd: String?
     public let initialCwd: String
-
-    /// The latest git status for `currentCwd`, or nil when the cwd is not a git
-    /// work tree (or has not been refreshed yet). Set by the app's
-    /// `GitStatusService`. Observed, so the sidebar tokens and the title pill react.
-    public var gitStatus: GitStatus?
 
     /// Count of unseen terminal notifications fired by this session's panes while it wasn't focused.
     /// Observed, so the sidebar badge reacts. Ephemeral: `SessionSnapshot` doesn't capture it, so it
@@ -102,11 +96,9 @@ public final class Session: Identifiable {
         return (path as NSString).lastPathComponent
     }
 
-    /// The directory to inspect for git status: the live `currentCwd` once a PWD
-    /// report has arrived, otherwise the `initialCwd`. A freshly restored session
-    /// has no `currentCwd` until the interactive shell emits OSC 7, so refreshing
-    /// against this effective cwd surfaces git state immediately on launch/select
-    /// rather than waiting (timing-dependent) for the first PWD report.
+    /// The session's effective working directory: the live `currentCwd` once a PWD
+    /// report has arrived, otherwise the `initialCwd`. Used for the title subtitle and
+    /// as the cwd a new split/overlay/quick-terminal inherits.
     public var effectiveCwd: String { currentCwd ?? initialCwd }
 }
 

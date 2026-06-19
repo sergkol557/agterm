@@ -255,19 +255,6 @@ final class ControlAPIUITests: XCTestCase {
                       "the overlay should auto-close when the command exits (no press-any-key prompt)")
     }
 
-    // statusbar toggle flips statusBarHidden in workspaces.json.
-    func testStatusBarToggle() throws {
-        XCTAssertTrue(pollStatusBarHidden(false, timeout: 10), "status bar should start visible")
-
-        let toggled = try sendCommand(#"{"cmd":"statusbar","args":{"mode":"toggle"}}"#)
-        XCTAssertEqual(toggled["ok"] as? Bool, true, "statusbar toggle should succeed: \(toggled)")
-        XCTAssertTrue(pollStatusBarHidden(true, timeout: 10), "toggle should hide the status bar")
-
-        let back = try sendCommand(#"{"cmd":"statusbar","args":{"mode":"on"}}"#)
-        XCTAssertEqual(back["ok"] as? Bool, true, "statusbar on should succeed: \(back)")
-        XCTAssertTrue(pollStatusBarHidden(false, timeout: 10), "on should show the status bar again")
-    }
-
     // session.split toggle shows split:true in the tree; toggling again clears it.
     func testSessionSplitToggle() throws {
         let split = try sendCommand(#"{"cmd":"session.split","target":"active","args":{"mode":"toggle"}}"#)
@@ -300,15 +287,16 @@ final class ControlAPIUITests: XCTestCase {
     }
 
     // an invalid mode returns an error and does NOT flip state.
-    func testInvalidStatusBarModeErrors() throws {
-        XCTAssertTrue(pollStatusBarHidden(false, timeout: 10), "status bar should start visible")
+    func testInvalidQuickModeErrors() throws {
+        let quick = app.descendants(matching: .any).matching(identifier: "quick-terminal").firstMatch
+        XCTAssertFalse(quick.exists, "quick terminal should start hidden")
 
-        let response = try sendCommand(#"{"cmd":"statusbar","args":{"mode":"bogus"}}"#)
-        XCTAssertEqual(response["ok"] as? Bool, false, "an invalid statusbar mode should fail")
+        let response = try sendCommand(#"{"cmd":"quick","args":{"mode":"bogus"}}"#)
+        XCTAssertEqual(response["ok"] as? Bool, false, "an invalid quick mode should fail")
         let error = try XCTUnwrap(response["error"] as? String, "an invalid mode should carry an error")
-        XCTAssertTrue(error.contains("invalid statusbar mode"), "should report the invalid mode, got: \(error)")
+        XCTAssertTrue(error.contains("invalid quick mode"), "should report the invalid mode, got: \(error)")
         // state must not have flipped.
-        XCTAssertTrue(pollStatusBarHidden(false, timeout: 5), "an invalid mode must leave the status bar visible")
+        XCTAssertFalse(quick.exists, "an invalid mode must leave the quick terminal hidden")
     }
 
     // session.select by a UNIQUE prefix of a session id resolves to that session: seed two sessions with
@@ -501,21 +489,6 @@ final class ControlAPIUITests: XCTestCase {
                let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let workspaces = obj["workspaces"] as? [[String: Any]],
                workspaces.map({ ($0["sessions"] as? [[String: Any]])?.count ?? -1 }) == expected {
-                return true
-            }
-            usleep(200_000)
-        }
-        return false
-    }
-
-    /// Polls the hermetic snapshot file until `statusBarHidden` equals `expected`.
-    private func pollStatusBarHidden(_ expected: Bool, timeout: TimeInterval) -> Bool {
-        let file = stateDir.appendingPathComponent("workspaces.json")
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if let data = try? Data(contentsOf: file),
-               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               (obj["statusBarHidden"] as? Bool ?? false) == expected {
                 return true
             }
             usleep(200_000)

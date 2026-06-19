@@ -12,10 +12,6 @@ import Observation
 public final class AppStore {
     public var workspaces: [Workspace]
     public var selectedSessionID: UUID?
-    /// Whether the bottom status bar is hidden. UI chrome preference, persisted
-    /// alongside the workspace tree so it survives relaunch and stays isolated
-    /// under a test's `AGT_STATE_DIR`.
-    public var statusBarHidden: Bool
 
     /// Most-recently-selected session ids, front = current. Drives the Ctrl-Tab switcher
     /// (`items[1]` is the previous session). `@ObservationIgnored`: read imperatively by the
@@ -25,10 +21,9 @@ public final class AppStore {
     @ObservationIgnored private let persistence: PersistenceStore
 
     public init(workspaces: [Workspace] = [], selectedSessionID: UUID? = nil,
-                statusBarHidden: Bool = false, persistence: PersistenceStore = PersistenceStore()) {
+                persistence: PersistenceStore = PersistenceStore()) {
         self.workspaces = workspaces
         self.selectedSessionID = selectedSessionID
-        self.statusBarHidden = statusBarHidden
         self.persistence = persistence
     }
 
@@ -250,14 +245,6 @@ public final class AppStore {
         if changed { save() }
     }
 
-    /// Sets whether the bottom status bar is hidden and persists. No-ops when the
-    /// value is unchanged so a redundant menu toggle doesn't write.
-    public func setStatusBarHidden(_ hidden: Bool) {
-        guard statusBarHidden != hidden else { return }
-        statusBarHidden = hidden
-        save()
-    }
-
     // MARK: - Persistence
 
     /// Builds a `Snapshot` value of the current tree. Each session captures its
@@ -270,7 +257,7 @@ public final class AppStore {
                                 isSplit: session.isSplit, fontSize: session.fontSize)
             })
         }
-        return Snapshot(selectedSessionID: selectedSessionID, workspaces: workspaceSnapshots, statusBarHidden: statusBarHidden)
+        return Snapshot(selectedSessionID: selectedSessionID, workspaces: workspaceSnapshots)
     }
 
     /// Rebuilds the tree from a snapshot: fresh `Session`s (surfaces and shells
@@ -282,7 +269,6 @@ public final class AppStore {
     /// skips `save()` for that reason). If the persisted `selectedSessionID` points
     /// at a session that no longer exists, it is cleared to keep selection valid.
     public func restore(from snapshot: Snapshot) {
-        statusBarHidden = snapshot.statusBarHidden ?? false
         workspaces = snapshot.workspaces.map { workspaceSnapshot in
             let sessions = workspaceSnapshot.sessions.map { sessionSnapshot -> Session in
                 let session = Session(id: sessionSnapshot.id, initialCwd: sessionSnapshot.cwd, customName: sessionSnapshot.customName)
