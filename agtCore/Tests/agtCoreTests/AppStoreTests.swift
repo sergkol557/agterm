@@ -505,7 +505,7 @@ struct AppStoreTests {
     @Test func renameSessionWithBlankClearsCustomName() {
         let store = Self.makeStore()
         let ws = store.addWorkspace(name: "work")
-        let session = store.addSession(toWorkspace: ws.id, cwd: "/Users/umputun/foo")!
+        let session = store.addSession(toWorkspace: ws.id, cwd: "/Users/user/foo")!
         store.renameSession(session.id, to: "build")
         store.renameSession(session.id, to: "   ")
         #expect(session.customName == nil)

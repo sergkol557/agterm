@@ -21,7 +21,7 @@ Problem it solves: Ghostty has no vertical tabs and no workspace grouping; cmux 
 
 ## Context (from discovery)
 
-- Working dir `/Users/umputun/dev.umputun/experiments/agt` is empty and not yet a git repo.
+- Working dir (the project root) is empty and not yet a git repo.
 - Reference implementation: **macterm** (`thdxg/macterm`, MIT) cloned at `/tmp/macterm`, built under the **same** toolchain we target (`SWIFT_VERSION 6.0`, `SWIFT_STRICT_CONCURRENCY complete`). We adapt its unavoidable-complexity files (ghostty app init, runtime callbacks, surface NSView, resource resolution) with attribution, and write our own model/sidebar/persistence. macterm is the ground truth for what actually compiles under strict concurrency.
 - Toolchain verified on this machine: `xcodegen` 2.45.4, `xcodebuild` (Xcode 26.5), `gh` 2.94, `swift` 6 (`swift test`), `zig` present (unused). `mise` NOT installed — bypass it, call `xcodegen`/`xcodebuild`/`swift` directly via shell scripts.
 - Prebuilt artifacts exist and are fresh: `thdxg/ghostty` release `build-2026-06-14` ships `GhosttyKit.xcframework.tar.gz` + `ghostty-resources.tar.gz`, fetched with `gh release download`. Both are gitignored, never committed.
@@ -154,7 +154,7 @@ This is the highest-risk area. An executor must implement it exactly, not improv
   "selectedSessionID": "uuid",
   "workspaces": [
     { "id": "uuid", "name": "work",
-      "sessions": [ { "id": "uuid", "customName": null, "cwd": "/Users/umputun/dev/foo" } ] }
+      "sessions": [ { "id": "uuid", "customName": null, "cwd": "/Users/user/dev/foo" } ] }
   ]
 }
 ```

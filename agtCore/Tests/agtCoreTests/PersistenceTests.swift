@@ -25,7 +25,7 @@ final class PersistenceTests {
     @Test func snapshotRoundTripsThroughDisk() throws {
         let original = Snapshot(selectedSessionID: UUID(), workspaces: [
             WorkspaceSnapshot(id: UUID(), name: "work", sessions: [
-                SessionSnapshot(id: UUID(), customName: "build", cwd: "/Users/umputun/dev/foo"),
+                SessionSnapshot(id: UUID(), customName: "build", cwd: "/Users/user/dev/foo"),
                 SessionSnapshot(id: UUID(), customName: nil, cwd: "/tmp"),
             ]),
             WorkspaceSnapshot(id: UUID(), name: "personal", sessions: []),
@@ -39,7 +39,7 @@ final class PersistenceTests {
         let app = AppStore(persistence: store)
         let work = app.addWorkspace(name: "work")
         let session = try! #require(app.addSession(toWorkspace: work.id, cwd: "/start"))
-        session.currentCwd = "/Users/umputun/dev/live"
+        session.currentCwd = "/Users/user/dev/live"
         app.renameSession(session.id, to: "build")
         let other = try! #require(app.addSession(toWorkspace: work.id, cwd: "/tmp"))
 
@@ -51,7 +51,7 @@ final class PersistenceTests {
         #expect(ws.name == "work")
         #expect(ws.sessions.map(\.id) == [session.id, other.id])
         #expect(ws.sessions[0].customName == "build")
-        #expect(ws.sessions[0].cwd == "/Users/umputun/dev/live")
+        #expect(ws.sessions[0].cwd == "/Users/user/dev/live")
         #expect(ws.sessions[1].cwd == "/tmp")
     }
 
@@ -59,7 +59,7 @@ final class PersistenceTests {
         let selected = UUID()
         let snapshot = Snapshot(selectedSessionID: selected, workspaces: [
             WorkspaceSnapshot(id: UUID(), name: "work", sessions: [
-                SessionSnapshot(id: selected, customName: "build", cwd: "/Users/umputun/dev/foo"),
+                SessionSnapshot(id: selected, customName: "build", cwd: "/Users/user/dev/foo"),
                 SessionSnapshot(id: UUID(), customName: nil, cwd: "/var/log"),
             ]),
             WorkspaceSnapshot(id: UUID(), name: "personal", sessions: [
@@ -77,7 +77,7 @@ final class PersistenceTests {
         let first = app.workspaces[0]
         #expect(first.sessions.map(\.id) == snapshot.workspaces[0].sessions.map(\.id))
         #expect(first.sessions[0].customName == "build")
-        #expect(first.sessions[0].initialCwd == "/Users/umputun/dev/foo")
+        #expect(first.sessions[0].initialCwd == "/Users/user/dev/foo")
         #expect(first.sessions[0].displayName == "build")
         #expect(first.sessions[1].customName == nil)
         #expect(first.sessions[1].initialCwd == "/var/log")
