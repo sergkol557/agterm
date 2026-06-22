@@ -48,6 +48,10 @@ See `CLAUDE.md` for the socket lifecycle, addressing, command catalog, and the k
 - **Add affordances.** A bottom bar (SwiftUI, in `ContentView`) holds a workspace-add button and a session-add menu — **New Session** (home directory) and **Open Directory…** (`NSOpenPanel`); the same two session actions are also on each workspace row's context menu.
 - **Accessibility identifiers** (`session-row`, `workspace-row`, `edit-field`, `add-session`) back the `agtermUITests` XCUITests, which drive the real app for rename, move, close, drag, and add.
 
+## libghostty integration
+
+`agterm` links `GhosttyKit.xcframework`, which `scripts/setup.sh` builds from upstream [ghostty-org/ghostty](https://github.com/ghostty-org/ghostty) source: a shallow checkout at a pinned commit plus `zig build`, using the keg-only `zig@0.15` formula for the zig version ghostty pins. Building from source keeps the libghostty toolchain self-owned, with no third-party fork and no prunable daily-build download. The pin is a deliberately chosen known-good commit (see [docs/known-issues.md](docs/known-issues.md)). The xcframework and the accompanying ghostty resources (themes, shell-integration scripts, compiled terminfo database) are gitignored and never committed; the build is one-time, cached by a present-check.
+
 ## Surface ownership
 
 The surface lifecycle is the rule that keeps the C interop safe.

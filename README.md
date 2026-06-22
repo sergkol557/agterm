@@ -1,27 +1,40 @@
 # agterm
 
-`agterm` is a small native macOS terminal built on [libghostty](https://ghostty.org), Ghostty's terminal embedding library. The app shell is SwiftUI, with two focused AppKit bridges: the terminal surface (libghostty renders into a Metal layer and needs raw key, IME, and mouse events SwiftUI does not expose) and the sidebar, an `NSOutlineView` chosen for first-class native drag-and-drop of sessions between workspaces.
+`agterm` is a native macOS terminal for working with AI coding agents across many sessions at once. It is intentionally opinionated: rather than scattering shells across tabs, it organizes them into named workspaces, each holding the sessions for one project or context, so several agent-driven sessions can run side by side and you can move between them without losing track of which is which.
 
-The distinguishing feature is a two-level workspace tree in a vertical sidebar: user-named workspaces (for example "work", "personal") each contain individual shell sessions. Ghostty itself has no vertical tabs and no workspace grouping; `agterm` provides exactly that and nothing more.
+What sets it apart:
 
-## Approach
+- **Workspace organization.** A vertical, two-level sidebar groups sessions under named workspaces such as "work" and "personal". Sessions split into two shells, drag between workspaces, and are reached by name, recency, or keyboard, so a screen full of concurrent sessions stays legible.
+- **Programmatic control.** A companion CLI, `agtermctl`, drives almost everything over a local socket: create sessions, type into them, run a program in an overlay and read its exit status, move and resize windows, or post a desktop notification tied to a specific session. An external script or an AI agent can build and steer its own terminal layout, and notify you in the exact session it was working in, rather than being stuck inside a single shell.
+- **A working surface built for flow.** Split a session into two shells, drop a quick scratch terminal over the active one, or run a program in a full or floating overlay without disturbing the session beneath it. Navigation stays on the keyboard: jump to a session by name with a fuzzy palette, flip through a most-recently-used list with Ctrl-Tab for a quick jump back, and step between sessions, panes, and windows with shortcuts. Windows that are open at quit reopen on the next launch.
 
-`agterm` links `GhosttyKit.xcframework`, which `scripts/setup.sh` builds from upstream [ghostty-org/ghostty](https://github.com/ghostty-org/ghostty) source — a shallow checkout at a pinned commit plus `zig build`, using the keg-only `zig@0.15` formula for the zig version ghostty pins. Building from source keeps the libghostty toolchain self-owned: no third-party fork, no prunable daily-build download. The pin is a deliberately chosen known-good commit (see [docs/known-issues.md](docs/known-issues.md)). The xcframework and the accompanying ghostty resources (themes, shell-integration scripts, compiled terminfo database) are gitignored and never committed; the build is one-time, cached by a present-check.
+For the real terminal work, rendering, VT parsing, and shell I/O, `agterm` embeds [Ghostty](https://ghostty.org)'s engine (libghostty); everything above is `agterm`'s own.
 
-The project is split into two modules:
+## Install
 
-- `agtermCore` is a host-free Swift package (Foundation and Observation only, no GhosttyKit, AppKit, or Metal). It holds the model, persistence, and naming logic and is covered by unit tests.
-- The app target adds the SwiftUI views and the libghostty bridge.
+> Pre-built releases are not published yet. Until the first one is out, build from source (below). The steps here describe how installing will work once releases are available.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the module split, the surface-ownership rules, and the concurrency contract at the C boundary.
+Releases are signed and notarized for Apple Silicon (arm64) Macs running macOS 14 or later, so they open without any Gatekeeper workaround.
 
-## Requirements
+Homebrew:
+
+```sh
+brew install --cask umputun/apps/agterm
+```
+
+The cask also installs the `agtermctl` command-line tool, so cask users should not run the in-app installer as well.
+
+Direct download:
+
+Download the latest `.dmg` from the [releases page](https://github.com/umputun/agterm/releases), open it, and drag `agterm.app` into `/Applications`. To put the `agtermctl` CLI on your `PATH`, use **Help ▸ Install Command Line Tool…** from the app.
+
+## Build from source
+
+Requirements:
 
 - macOS 14 or later.
 - Xcode 26 with `xcodegen` on `PATH`, plus its Metal Toolchain (auto-downloaded on first setup).
 - Homebrew, for the `zig@0.15` formula `scripts/setup.sh` builds libghostty with.
-
-## Build and run
 
 ```sh
 scripts/setup.sh   # build libghostty from ghostty source + stage resources (idempotent; first run takes a few min)
@@ -42,11 +55,11 @@ xcodebuild test -project agterm.xcodeproj -scheme agterm -destination 'platform=
 
 ## Features
 
-- Two-level sidebar tree: workspaces, each containing sessions. One libghostty surface per session. Each row carries a leading kind icon: a filled folder for a workspace, an outlined terminal for a session.
+- Two-level sidebar tree: workspaces, each containing sessions. Each row carries a leading kind icon: a filled folder for a workspace, an outlined terminal for a session.
 - Default session name is the basename of the session's working directory. Renaming a session pins a custom name; clearing it reverts to the basename.
 - Add workspaces and sessions from a two-icon bar at the bottom of the sidebar: a workspace button, and a session menu offering **New Session** (a shell in the home directory) and **Open Directory…** (a folder picker that roots the session there). The two session actions are also on each workspace row's right-click menu, so a specific or empty workspace can be targeted.
 - Rename inline (double-click a row or use its `Rename` context-menu item). Close a session from its context menu, or it closes itself when the shell exits. Delete a whole workspace from its right-click menu (also in the menu bar and the action palette); a non-empty workspace asks to confirm first, and the last remaining workspace can't be deleted.
-- Move a session between workspaces by dragging it onto another workspace (native `NSOutlineView` drag-and-drop) or via the row's `Move to` menu. The same session instance is kept either way, so its surface and live shell survive the move.
+- Move a session between workspaces by dragging it onto another workspace, or via the row's `Move to` menu. The session keeps running across the move, with its shell and scrollback intact.
 - A quick terminal: a single scratch terminal overlaid at 90% of the window (toolbar button next to the split toggle), opening in the active session's directory. Click the button again or the surrounding margin to dismiss; hiding keeps its shell alive. It is not persisted across launches.
 - A standard macOS menu bar mirrors the in-app actions with keyboard shortcuts: **File** — New Session (⌘N), New Workspace (⇧⌘N), Open Directory… (⌘O), Rename Session/Workspace, Delete Workspace, Close Session (⌘W, terminal-style: closes the active session); **View** — Split (⌘D), Quick Terminal (⌃`), the command palettes, Previous/Next Session (⌥⌘↑/⌥⌘↓), First/Last Session (menu and palette only, no hotkey), Increase/Decrease/Actual font size (⌘+/⌘−/⌘0).
 - Two fuzzy-search command palettes (type to filter, ↑/↓ to move, Enter to run, Esc to dismiss): the **session switcher** (⌃P) jumps between open sessions by name or working directory, and the **action palette** (⌃⇧P) runs any command (new/rename/close, delete workspace, split, quick terminal, font size, move session to a workspace, …). Results sort by match quality then alphabetically. Both are also in the View menu.
