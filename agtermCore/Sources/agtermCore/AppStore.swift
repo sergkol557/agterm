@@ -232,6 +232,9 @@ public final class AppStore {
         session.splitCwd = nil
         session.splitTitle = nil
         session.initialSplitCwd = nil
+        // a search bar pinned to the torn-down split surface would otherwise stay stuck (the weak
+        // `searchSurface` zeroes but `searchActive` stays true), so reset search on the surviving session.
+        session.clearSearch()
         save()
     }
 
@@ -252,6 +255,9 @@ public final class AppStore {
         session.hasSplit = false
         session.splitFocused = true
         if let cwd = session.splitCwd { session.currentCwd = cwd }
+        // the primary surface (possibly the search owner) is torn down while the session survives as the
+        // promoted split, so reset search rather than leave a stuck bar pinned to the gone primary.
+        session.clearSearch()
         save()
     }
 
@@ -322,9 +328,14 @@ public final class AppStore {
     /// fresh shell). Used on the scratch shell's own `exit` and on session/workspace/window teardown.
     /// No-op (returns false) when there is no scratch surface.
     @discardableResult public func closeScratch(_ sessionID: UUID) -> Bool {
-        guard let session = session(withID: sessionID), session.scratchSurface != nil else { return false }
+        guard let session = session(withID: sessionID), let scratch = session.scratchSurface else { return false }
         session.scratchActive = false
-        session.scratchSurface?.teardown()
+        // if the open search bar is pinned to the scratch being torn down, reset search rather than leave a
+        // stuck, no-op bar (the weak `searchSurface` zeroes but `searchActive` stays true) — mirrors the
+        // closeSplit/closePrimaryPane handling. Guarded on identity so a search owned by the main/split pane
+        // (the scratch can cover a session whose pane opened search) survives the scratch teardown.
+        if session.searchSurface === scratch { session.clearSearch() }
+        scratch.teardown()
         session.scratchSurface = nil
         return true
     }
