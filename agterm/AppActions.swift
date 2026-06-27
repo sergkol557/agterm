@@ -509,16 +509,29 @@ final class AppActions {
                 })
             }
         }
-        // user-defined keymap commands: marked `custom`, showing the bound chord (if any). Running one
-        // delegates to the runner, which resolves the active session's context and spawns the shell line.
-        for command in settingsModel?.keymap.commands ?? [] {
-            items.append(PaletteItem(id: "custom-\(command.id)", title: command.name,
-                                     shortcut: command.shortcut.isEmpty ? nil : command.shortcut,
-                                     badge: "custom") { [weak self] in
-                self?.customCommandRunner?.run(command)
-            })
-        }
+        // user-defined keymap commands: marked `custom`, showing the bound chord (if any).
+        items.append(contentsOf: customCommandItems(badge: "custom"))
         return items
+    }
+
+    /// The user-defined keymap commands as palette items, showing the bound chord (if any). Running one
+    /// delegates to the runner, which resolves the active session's context and spawns the shell line.
+    /// `badge` tags each entry (`custom` in the mixed action palette); the custom-only palette passes nil
+    /// since every row there is already a custom command.
+    private func customCommandItems(badge: String?) -> [PaletteItem] {
+        (settingsModel?.keymap.commands ?? []).map { command in
+            PaletteItem(id: "custom-\(command.id)", title: command.name,
+                        shortcut: command.shortcut.isEmpty ? nil : command.shortcut,
+                        badge: badge) { [weak self] in
+                self?.customCommandRunner?.run(command)
+            }
+        }
+    }
+
+    /// Only the user-defined keymap commands, for the `.customCommands` palette. Same rows as the
+    /// `custom` subset of `paletteActions()` but WITHOUT the `custom` badge — the whole list is custom.
+    func paletteCustomCommands() -> [PaletteItem] {
+        customCommandItems(badge: nil)
     }
 
     /// The VISIBLE/FILTERED sessions as palette items (the ⌃P switcher); choosing one selects it. Scoped

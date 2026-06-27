@@ -348,6 +348,8 @@ struct agtermApp: App {
                     .keyboardShortcut(shortcut(for: .sessionPalette))
                 Button { palette.toggle(.actions) } label: { Label("Command Palette", systemImage: "command") }
                     .keyboardShortcut(shortcut(for: .commandPalette))
+                Button { palette.toggle(.customCommands) } label: { Label("Custom Commands", systemImage: "terminal") }
+                    .keyboardShortcut(shortcut(for: .customCommandPalette))
                 Divider()
                 // step between sessions in the sidebar's flattened order. Prev/Next ride ⌥⌘↑/↓ (NOT bare
                 // ⌘+arrows, which shadow text-field caret nav in the rename/palette/settings fields); ⌥⌘↑/↓

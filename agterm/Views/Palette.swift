@@ -34,11 +34,13 @@ struct PaletteItem: Identifiable {
 
 /// Which palette is open. `actions` fuzzy-searches the app's commands; `sessions` fuzzy-searches
 /// the open sessions to jump between them; `themes` fuzzy-searches the bundled themes with a live
-/// preview on navigation (Enter commits, Esc reverts).
+/// preview on navigation (Enter commits, Esc reverts); `customCommands` fuzzy-searches only the
+/// user-defined keymap commands (the `custom` subset of `actions`, shown without the badge).
 enum PaletteMode {
     case actions
     case sessions
     case themes
+    case customCommands
 }
 
 /// Drives the command palettes: `mode` is nil when closed, else the open palette. App-global, set
@@ -80,6 +82,7 @@ struct CommandPalette: View {
         case .actions: return actions.paletteActions()
         case .sessions: return actions.paletteSessions()
         case .themes: return actions.paletteThemes()
+        case .customCommands: return actions.paletteCustomCommands()
         case .none: return []
         }
     }
@@ -107,6 +110,7 @@ struct CommandPalette: View {
         switch controller.mode {
         case .sessions: return "Go to session…"
         case .themes: return "Select a theme…"
+        case .customCommands: return "Run a custom command…"
         default: return "Run an action…"
         }
     }

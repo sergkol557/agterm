@@ -15,13 +15,14 @@ struct BuiltinActionTests {
         #expect(BuiltinAction.toggleSplit.rawValue == "toggle_split")
         #expect(BuiltinAction.toggleSearch.rawValue == "toggle_search")
         #expect(BuiltinAction.commandPalette.rawValue == "command_palette")
+        #expect(BuiltinAction.customCommandPalette.rawValue == "custom_command_palette")
         #expect(BuiltinAction.nextAttentionSession.rawValue == "next_attention_session")
         #expect(BuiltinAction.toggleSidebar.rawValue == "toggle_sidebar")
         #expect(BuiltinAction.selectTheme.rawValue == "select_theme")
         #expect(BuiltinAction.toggleFlaggedView.rawValue == "toggle_flagged_view")
         #expect(BuiltinAction.toggleFlag.rawValue == "toggle_flag")
         #expect(BuiltinAction.focusWorkspace.rawValue == "focus_workspace")
-        #expect(BuiltinAction.allCases.count == 33)
+        #expect(BuiltinAction.allCases.count == 34)
     }
 
     @Test func rejectsUnknownName() {
@@ -65,6 +66,7 @@ struct BuiltinActionTests {
             .quickTerminal: Chord(mods: [.control], key: "`"),
             .sessionPalette: Chord(mods: [.control], key: "p"),
             .commandPalette: Chord(mods: [.control, .shift], key: "p"),
+            .customCommandPalette: Chord(mods: [.control, .shift], key: "o"),
         ]
         // the table must cover every case so a new action can't be added without a documented default.
         #expect(expected.count == BuiltinAction.allCases.count)
@@ -86,6 +88,14 @@ struct BuiltinActionTests {
         let chord = Chord(mods: [.command, .control], key: "s")
         #expect(BuiltinAction.toggleSidebar.defaultChord == chord)
         // must round-trip through the keymap grammar (so the starter renders it, not "(not expressible)").
+        #expect(parseKeybind(chord.displayString) == [chord])
+    }
+
+    @Test func customCommandPaletteDefaultIsCtrlShiftOAndRoundTrips() {
+        let chord = Chord(mods: [.control, .shift], key: "o")
+        #expect(BuiltinAction.customCommandPalette.defaultChord == chord)
+        // must round-trip through the keymap grammar (so the starter renders it, not "(not expressible)").
+        #expect(chord.displayString == "ctrl+shift+o")
         #expect(parseKeybind(chord.displayString) == [chord])
     }
 

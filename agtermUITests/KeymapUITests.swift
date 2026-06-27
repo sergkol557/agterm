@@ -47,6 +47,31 @@ final class KeymapUITests: XCTestCase {
                       "running the custom command from the palette should touch the marker file")
     }
 
+    // the Custom Commands palette (Navigate ▸ Custom Commands, ⌃⇧O) lists ONLY custom commands and drops
+    // the `custom` badge — every row is already custom. Seed one custom command, open the palette, and
+    // assert: the custom row appears, a built-in action (New Session) does NOT, no badge shows, and it runs.
+    func testCustomCommandsPaletteShowsCustomOnlyWithoutBadge() throws {
+        let marker = markerDir.appendingPathComponent("custom-only")
+        seedKeymap("command \"Touch File\" touch '\(marker.path)'\n")
+        app.launchForUITest()
+        XCTAssertTrue(app.staticTexts["session-row"].firstMatch.waitForExistence(timeout: 20), "seeded session should exist")
+
+        openPalette("Custom Commands")
+        XCTAssertTrue(app.staticTexts["Touch File"].waitForExistence(timeout: 5),
+                      "the custom command should appear in the Custom Commands palette")
+        // built-in actions are excluded — this palette is custom-only.
+        XCTAssertFalse(app.staticTexts["New Session"].exists, "built-in actions must not appear in the Custom Commands palette")
+        // the `custom` badge is suppressed here (the whole list is custom).
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "palette-badge").firstMatch.exists,
+                       "the Custom Commands palette should not show the `custom` badge")
+
+        // filter to the command (also focuses the field), then run it and assert it executed.
+        typeIntoPalette("Touch File")
+        app.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(poll { FileManager.default.fileExists(atPath: marker.path) },
+                      "running a custom command from the Custom Commands palette should touch the marker file")
+    }
+
     // the Increase Font Size palette hint must NOT show the unparseable kitty string `cmd++` (its
     // default chord's key is `+`, a grammar separator, so `displayString` renders `cmd++`). The
     // palette-hint path falls back to a readable ⌘+ glyph for separator-key chords instead.
