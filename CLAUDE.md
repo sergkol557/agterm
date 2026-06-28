@@ -35,7 +35,7 @@ The app must build and `swift test` must stay green after every change.
 ## GhosttyKit.xcframework
 
 - Source: **built from upstream `ghostty-org/ghostty` source** by `scripts/setup.sh`, pinned to the `GHOSTTY_REV` SHA (`zig build -Demit-xcframework=true -Dxcframework-target=native …` with zig 0.15.2). Self-owned: the only inputs are upstream ghostty at a pinned commit and the zig/Metal toolchains — no third-party fork, no daily-build release that can be pruned. Bump `GHOSTTY_REV` deliberately when adopting a newer libghostty.
-- **The pin is a pre-regression commit on purpose.** A libghostty `main` renderer regression introduced after `4dcb09ada` (2026-04-30) blanks the scrollback on a font-size *increase* (decrease is fine); it is NOT an agterm bug and no app-side change fixes it. Every thdxg/ghostty daily build (which agterm used to download) has it. Re-test the font-increase case before bumping past it. See `docs/known-issues.md`.
+- **The pin is a pre-regression commit on purpose.** A libghostty `main` renderer regression introduced after `4dcb09ada` (2026-04-30) blanks the scrollback on a font-size *increase* (decrease is fine); it is NOT an agterm bug and no app-side change fixes it. Every thdxg/ghostty daily build (which agterm used to download) has it. Re-test the font-increase case before bumping past it.
 - `setup.sh` stages the freshly-built `macos/GhosttyKit.xcframework` plus `zig-out/share/{ghostty,terminfo}` resources. The xcframework, `agterm/Resources/ghostty`, and `agterm/Resources/terminfo` are gitignored and never committed.
 - The xcframework is linked with `embed: false` in `project.yml`. Never embed it; embedding breaks the signature on non-Developer-ID builds.
 

@@ -255,8 +255,7 @@ final class GhosttyApp {
     /// Known limitation: this scans only the four top-level config files; it does NOT follow
     /// `config-file` includes that `ghostty_config_load_recursive_files` expands, so a `selection-*`
     /// delegated through an include is missed and the sidebar pill falls back. A known edge case
-    /// (it pre-dates the agterm-scoped `ghostty.conf` and affects `~/.config/ghostty/config` too);
-    /// see docs/known-issues.md.
+    /// (it pre-dates the agterm-scoped `ghostty.conf` and affects `~/.config/ghostty/config` too).
     private static func resolveSelectionColors(ghosttyConfigPath: String) -> (NSColor?, NSColor?) {
         var sources: [String] = []
         if let defaults = Bundle.main.url(forResource: "ghostty-defaults", withExtension: "conf") {

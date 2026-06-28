@@ -6,7 +6,7 @@
 # Xcode's Metal Toolchain. No third-party fork, no daily-build release that can be pruned.
 #
 # The pin is DELIBERATELY a pre-regression commit: a libghostty renderer regression introduced on
-# main after this SHA blanks the terminal scrollback on a font-size increase. See docs/known-issues.md.
+# main after this SHA blanks the terminal scrollback on a font-size increase.
 # Bump GHOSTTY_REV deliberately once upstream fixes that, re-testing the font-increase case.
 #
 # One-time cost: the build (a few minutes, plus a Metal Toolchain download on first run) is skipped

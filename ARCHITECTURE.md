@@ -50,7 +50,7 @@ See `CLAUDE.md` for the socket lifecycle, addressing, command catalog, and the k
 
 ## libghostty integration
 
-`agterm` links `GhosttyKit.xcframework`, which `scripts/setup.sh` builds from upstream [ghostty-org/ghostty](https://github.com/ghostty-org/ghostty) source: a shallow checkout at a pinned commit plus `zig build`, using the keg-only `zig@0.15` formula for the zig version ghostty pins. Building from source keeps the libghostty toolchain self-owned, with no third-party fork and no prunable daily-build download. The pin is a deliberately chosen known-good commit (see [docs/known-issues.md](docs/known-issues.md)). The xcframework and the accompanying ghostty resources (themes, shell-integration scripts, compiled terminfo database) are gitignored and never committed; the build is one-time, cached by a present-check.
+`agterm` links `GhosttyKit.xcframework`, which `scripts/setup.sh` builds from upstream [ghostty-org/ghostty](https://github.com/ghostty-org/ghostty) source: a shallow checkout at a pinned commit plus `zig build`, using the keg-only `zig@0.15` formula for the zig version ghostty pins. Building from source keeps the libghostty toolchain self-owned, with no third-party fork and no prunable daily-build download. The pin is a deliberately chosen known-good commit. The xcframework and the accompanying ghostty resources (themes, shell-integration scripts, compiled terminfo database) are gitignored and never committed; the build is one-time, cached by a present-check.
 
 ## Surface ownership
 
