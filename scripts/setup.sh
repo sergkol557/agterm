@@ -66,7 +66,7 @@ git -C "$BUILD_DIR" fetch -q --depth 1 origin "$GHOSTTY_REV"
 git -C "$BUILD_DIR" -c advice.detachedHead=false checkout -q FETCH_HEAD
 
 echo "building GhosttyKit.xcframework with zig 0.15.2 (a few minutes)..."
-( cd "$BUILD_DIR" && "$ZIG" build -Doptimize=ReleaseFast -Demit-xcframework=true -Dxcframework-target=native -Demit-macos-app=false )
+( cd "$BUILD_DIR" && "$ZIG" build -Doptimize=ReleaseFast -Demit-xcframework=true -Dxcframework-target=universal -Demit-macos-app=false )
 
 if $need_xc; then
   echo "staging GhosttyKit.xcframework..."
