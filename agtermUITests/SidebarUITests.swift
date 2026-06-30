@@ -13,6 +13,7 @@ import XCTest
 final class SidebarUITests: XCTestCase {
     private var app: XCUIApplication!
     private var stateDir: URL!
+    private var markerDir: URL!
 
     override func setUp() async throws {
         continueAfterFailure = false
@@ -20,6 +21,9 @@ final class SidebarUITests: XCTestCase {
         // "workspace 1" + one session, and we never touch the real workspaces.json.
         stateDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("agterm-uitest-\(UUID().uuidString)", isDirectory: true)
+        markerDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agterm-sidebar-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: markerDir, withIntermediateDirectories: true)
         app = XCUIApplication()
         app.launchEnvironment["AGTERM_STATE_DIR"] = stateDir.path
         app.launchForUITest()
@@ -28,6 +32,26 @@ final class SidebarUITests: XCTestCase {
     override func tearDown() async throws {
         app?.terminate()
         if let stateDir { try? FileManager.default.removeItem(at: stateDir) }
+        if let markerDir { try? FileManager.default.removeItem(at: markerDir) }
+    }
+
+    /// Focus oracle: types `tty > file` into whatever currently holds keyboard focus, then Return.
+    /// The marker file gets written only if the keystrokes reached the session's shell — i.e. the
+    /// terminal has focus. If the sidebar kept focus the text drives outline type-select instead and
+    /// the file stays absent, so a nil return means "focus did NOT return to the terminal".
+    private func terminalReceivedTyping(named name: String) -> Bool {
+        let file = markerDir.appendingPathComponent(name)
+        app.typeText("tty > '\(file.path)'")
+        app.typeKey(.return, modifierFlags: [])
+        let deadline = Date().addingTimeInterval(8)
+        while Date() < deadline {
+            if let contents = try? String(contentsOf: file, encoding: .utf8),
+               !contents.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return true
+            }
+            usleep(150_000)
+        }
+        return false
     }
 
     /// The (single, seeded) session row, matched by its stable accessibility
@@ -88,6 +112,40 @@ final class SidebarUITests: XCTestCase {
         rename(ws, to: "work")
         XCTAssertTrue(app.staticTexts["work"].waitForExistence(timeout: 5),
                       "workspace header should show the new name after rename")
+    }
+
+    // issue #41: Esc must cancel the inline rename — close edit mode and discard the typed change.
+    func testRenameSessionEscCancels() throws {
+        let row = sessionRow()
+        XCTAssertTrue(row.waitForExistence(timeout: 20), "session row should exist")
+        let original = row.value as? String
+        row.rightClick()
+        let rename = app.menuItems["Rename"]
+        XCTAssertTrue(rename.waitForExistence(timeout: 5), "Rename menu item should appear")
+        rename.click()
+        let field = app.descendants(matching: .any).matching(identifier: "edit-field").firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "rename did not enter edit mode (field never appeared)")
+        app.typeKey("a", modifierFlags: .command)
+        app.typeText("should-be-discarded")
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        // edit mode closes: on restore the field's identifier reverts from edit-field to session-row.
+        XCTAssertTrue(field.waitForNonExistence(timeout: 5), "Esc should close rename edit mode")
+        // and the name is unchanged: the rename was discarded, not committed.
+        XCTAssertEqual(sessionRow().value as? String, original, "Esc should discard the rename")
+        // focus returns to the terminal: the sidebar must not keep focus after the rename ends.
+        usleep(800_000)
+        XCTAssertTrue(terminalReceivedTyping(named: "after-esc"),
+                      "Esc should return focus to the session terminal, not keep it on the sidebar")
+    }
+
+    // ending a rename with Return must also hand focus back to the terminal (not keep it on the sidebar).
+    func testRenameSessionCommitReturnsFocus() throws {
+        let row = sessionRow()
+        rename(row, to: "renamed-focus")
+        XCTAssertTrue(waitForValue(row, "renamed-focus", timeout: 5), "rename should commit")
+        usleep(800_000)
+        XCTAssertTrue(terminalReceivedTyping(named: "after-commit"),
+                      "committing a rename should return focus to the session terminal")
     }
 
     func testCloseSession() throws {
