@@ -5,7 +5,7 @@ INSTALL_DIR := $(HOME)/Applications
 RELEASE_APP := build/DerivedData/Build/Products/Release/agterm.app
 
 .DEFAULT_GOAL := help
-.PHONY: help prep generate build run release deploy test lint dist clean
+.PHONY: help prep generate build run release deploy test lint dist clean sync
 
 help: ## list targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -31,6 +31,9 @@ deploy: release ## release build + copy to ~/Applications
 	rm -rf "$(INSTALL_DIR)/agterm.app"
 	cp -R "$(RELEASE_APP)" "$(INSTALL_DIR)/agterm.app"
 	@echo "installed $(INSTALL_DIR)/agterm.app"
+
+sync: ## fetch and merge upstream, build, deploy, clean, and push
+	./scripts/sync.sh
 
 test: ## host-free agtermCore unit tests (scripts/test.sh)
 	./scripts/test.sh
