@@ -7,7 +7,7 @@ import XCTest
 /// assert against the response and the `workspaces.json` file-polling oracle the sidebar tests use.
 @MainActor
 final class ControlAPIUITests: XCTestCase {
-    private var app: XCUIApplication!
+    var app: XCUIApplication!
     private var stateDir: URL!
     private var socketPath: String!
     private var markerDir: URL!
@@ -1026,7 +1026,7 @@ final class ControlAPIUITests: XCTestCase {
     }
 
     /// The id of the seeded (active) session from the tree.
-    private func activeSessionID() throws -> String {
+    func activeSessionID() throws -> String {
         let tree = try sendCommand(#"{"cmd":"tree"}"#)
         let result = try XCTUnwrap(tree["result"] as? [String: Any], "tree should carry a result")
         let t = try XCTUnwrap(result["tree"] as? [String: Any], "result should carry a tree")
@@ -2366,7 +2366,7 @@ final class ControlAPIUITests: XCTestCase {
     }
 
     /// Build a `session.type` request line with JSON-escaped `text` (covers the newline and the quoted path).
-    private func typeRequest(text: String, target: String? = nil, select: Bool) -> String {
+    func typeRequest(text: String, target: String? = nil, select: Bool) -> String {
         var obj: [String: Any] = ["cmd": "session.type", "args": ["text": text, "select": select]]
         if let target { obj["target"] = target }
         let data = try! JSONSerialization.data(withJSONObject: obj)
@@ -2441,7 +2441,7 @@ final class ControlAPIUITests: XCTestCase {
 
     /// Polls the hermetic snapshot file until the (single seeded workspace's) first session's `isSplit`
     /// equals `expected`.
-    private func pollActiveSessionSplit(_ expected: Bool, timeout: TimeInterval) -> Bool {
+    func pollActiveSessionSplit(_ expected: Bool, timeout: TimeInterval) -> Bool {
         stateDir.pollSnapshot(equals: expected, timeout: timeout) { obj in
             guard let workspaces = obj["workspaces"] as? [[String: Any]],
                   let sessions = workspaces.first?["sessions"] as? [[String: Any]] else { return nil }
@@ -2578,7 +2578,7 @@ final class ControlAPIUITests: XCTestCase {
     /// Connect to the app's control socket, send `line` (newline-terminated), read the single response
     /// line, and parse it as JSON. Retries the connect briefly since the server's scene `.task` may bind a
     /// beat after the window appears.
-    private func sendCommand(_ line: String) throws -> [String: Any] {
+    func sendCommand(_ line: String) throws -> [String: Any] {
         let fd = try connect(to: socketPath)
         defer { close(fd) }
 
