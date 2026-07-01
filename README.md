@@ -55,7 +55,7 @@ A file open in the quick terminal, the window's shared scratch overlay:
 
 ## Install
 
-Pre-built releases are for **Apple Silicon (arm64) Macs running macOS 14 or later**.
+Pre-built releases are for **macOS 14 or later**, supporting both **Apple Silicon (arm64)** and **Intel (x86_64)** architectures (universal build).
 
 These interim builds are ad-hoc signed but **not yet Apple-notarized** (Developer ID enrollment is in progress), so macOS Gatekeeper blocks them until the quarantine flag is removed. This is temporary — once notarized builds ship, they install with no extra step.
 
