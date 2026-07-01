@@ -61,6 +61,7 @@ surface ownership, and the C-boundary concurrency contract before changing the b
 
 ## Build and test commands
 
+- `scripts/sync.sh` — слияние с апстримом (upstream/master), сборка, деплой, очистка и пуш в origin.
 - `scripts/setup.sh` — build `GhosttyKit.xcframework` and the ghostty resources from upstream ghostty
   source (pinned SHA, zig 0.15.2).
   Idempotent; skips the build if both are already present.
@@ -69,7 +70,7 @@ surface ownership, and the C-boundary concurrency contract before changing the b
 - `scripts/build.sh` — same but Release, no launch.
 - `cd agtermCore && swift test` — run the host-free unit tests (`scripts/test.sh` wraps this).
 - `Makefile` — a thin front door over the scripts: `make prep`/`build` (Debug,
-  no launch)/`run`/`release`/`deploy` (Release build + copy to `~/Applications`)/`test`/`lint`/`dist VERSION=x.y.z [PUBLISH=1]`
+  no launch)/`run`/`release`/`deploy` (Release build + copy to `~/Applications`)/`sync` (слияние с апстримом + сборка + деплой)/`test`/`lint`/`dist VERSION=x.y.z [PUBLISH=1]`
   (the `release.sh` DMG)/`clean`; a bare `make` lists them.
   The scripts stay the source of truth — only `build`, `deploy`, and `lint` carry their own recipe.
 - `make lint` runs `swiftlint lint --strict` over the tree, configured by `.swiftlint.yml` at the repo
