@@ -639,19 +639,23 @@ private struct WindowContentView: View {
     /// traffic lights.
     private var customTitlebar: some View {
         HStack(spacing: 0) {
-            Color.clear.frame(width: 78) // system traffic lights
+            Color.clear.frame(width: 78).allowsHitTesting(false) // system traffic lights
             if store.sidebarVisible {
                 HStack(spacing: 0) {
                     Spacer(minLength: 0)
                     sidebarToggleButton.labelStyle(.iconOnly)
                 }
                 .frame(width: max(40, CGFloat(store.sidebarWidth) - 78))
-                Color.clear.frame(width: 11) // 1px divider + gap to the title
+                Color.clear.frame(width: 11).allowsHitTesting(false) // 1px divider + gap to the title
             } else {
                 sidebarToggleButton.labelStyle(.iconOnly)
                 Spacer().frame(width: 12)
             }
             titleLabel
+                // the title text falls through to the drag/zoom layer behind it (see `.background` below),
+                // so double-clicking it zooms and dragging it moves the window — the rest of the row is
+                // empty spacers (already non-hittable) and the buttons, which keep their own clicks.
+                .allowsHitTesting(false)
             if attentionButtonEnabled {
                 attentionButton.labelStyle(.iconOnly).padding(.leading, 10)
             }
@@ -674,6 +678,12 @@ private struct WindowContentView: View {
         .imageScale(compactToolbar ? .medium : .large)
         .frame(height: titlebarHeight)
         .frame(maxWidth: .infinity)
+        // make the header behave like a standard title bar: single-click drag moves the window, double-click
+        // runs the user's configured title-bar action (zoom/minimize/none). The layer sits BEHIND the row,
+        // so the buttons render in front and keep their clicks; the empty spacers + the title text opt out of
+        // hit-testing (above) so their region falls through to it. Custom titlebar = no native title-bar
+        // double-click handling, hence this.
+        .background { WindowControlArea() }
     }
 
     /// Our own sidebar show/hide toggle (the custom split has no system one). Animated collapse.
@@ -1197,6 +1207,58 @@ private struct WindowAccessor: NSViewRepresentable {
     }
 }
 
+/// A transparent AppKit layer placed behind the custom titlebar's decorative regions (the title text and
+/// the empty spacers, which opt out of SwiftUI hit-testing) so the header behaves like a real title bar:
+/// a single-click drag moves the window (`performDrag`) and a double-click runs the user's configured
+/// title-bar double-click action. The custom titlebar is a SwiftUI view, not AppKit's native title bar,
+/// so the OS double-click handling never reaches it; this restores it. The interactive header buttons
+/// render in front and keep their own clicks. `mouseDownCanMoveWindow` is off so our `mouseDown` — not
+/// AppKit's automatic move — sees the event and can tell a double-click apart from a drag.
+private struct WindowControlArea: NSViewRepresentable {
+    func makeNSView(context _: Context) -> TitlebarControlView { TitlebarControlView() }
+    func updateNSView(_: TitlebarControlView, context _: Context) {}
+
+    final class TitlebarControlView: NSView {
+        override var mouseDownCanMoveWindow: Bool { false }
+
+        override func mouseDown(with event: NSEvent) {
+            if event.clickCount == 2 {
+                performTitlebarDoubleClickAction()
+                return
+            }
+            // a single click that turns into a drag moves the window; a plain click returns at once.
+            window?.performDrag(with: event)
+        }
+
+        /// Mirror AppKit's native title-bar double-click by honoring the system setting at
+        /// Desktop & Dock ▸ "Double-click a window's title bar to" (`AppleActionOnDoubleClick`
+        /// in `NSGlobalDomain`): Zoom/Fill → zoom, Minimize → miniaturize, "Do Nothing" → no-op.
+        /// The key is absent until the user changes it from the macOS default (Zoom), so an
+        /// untouched system reads as `nil` here and still zooms — preserving the prior behavior.
+        /// Read live on each double-click so a setting change takes effect without an app relaunch.
+        /// "Fill" maps to `zoom` (the closest standard NSWindow action; true Fill uses the newer
+        /// window-tiling APIs). Zoom matches the green button and the `window.zoom` control command.
+        ///
+        /// A UITest env override (`AGTERM_UITEST_DOUBLECLICK_ACTION`) takes precedence so the gesture
+        /// tests are hermetic regardless of the host machine's setting; it rides the environment
+        /// because launch arguments trip the macOS 15+ no-window-at-launch bug (FB11763863, see
+        /// `ui-tests.md`). Production never sets it and falls through to the live system default.
+        private func performTitlebarDoubleClickAction() {
+            guard let window else { return }
+            let action = ProcessInfo.processInfo.environment["AGTERM_UITEST_DOUBLECLICK_ACTION"]
+                ?? UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick")
+            switch action {
+            case "Minimize":
+                window.performMiniaturize(nil)
+            case "None":
+                break
+            default: // "Maximize", "Fill", or unset (macOS default) → zoom
+                window.zoom(nil)
+            }
+        }
+    }
+}
+
 /// App-side bridge mapping a `WindowInfo.ID` to its live `NSWindow`. `WindowLibrary` is host-free
 /// (no AppKit), so the NSWindow handles live here. `TitleProbeView` registers/unregisters on window
 /// attach/close; `raise(_:)` brings an already-open window forward (the dedup-by-id raise path) and
@@ -1289,6 +1351,17 @@ final class WindowRegistry {
         let origin = WindowGeometry.clampOrigin(requested, windowSize: WindowGeometry.Size(size),
                                                 displayFrame: WindowGeometry.Rect(screen.frame)).cgPoint
         window.setFrameOrigin(origin)
+        return true
+    }
+
+    /// Zooms (the maximize-to-screen toggle) the on-screen window for `id` if one is live, driving the
+    /// standard `NSWindow.zoom` — the same action as the green zoom button and the double-click-header
+    /// gesture. A second call restores the prior frame. Returns false if no window is registered for `id`
+    /// (not open). The control-channel `window.zoom` path.
+    @discardableResult
+    func zoom(_ id: WindowInfo.ID) -> Bool {
+        guard let window = windows[id] else { return false }
+        window.zoom(nil)
         return true
     }
 }
@@ -1410,6 +1483,7 @@ private struct SplitRatioAccessor: NSViewRepresentable {
         /// Top strip (in points) to clip the split's divider out of; updated on a compact-toolbar toggle.
         var titlebarHeight: CGFloat = 0 { didSet { if titlebarHeight != oldValue { updateDividerClip() } } }
         nonisolated(unsafe) private var resizeObserver: NSObjectProtocol?
+        nonisolated(unsafe) private var applyObserver: NSObjectProtocol?
         nonisolated(unsafe) private var saveWorkItem: DispatchWorkItem?
         private weak var splitView: NSSplitView?
         private var dividerClipMask: CALayer?
@@ -1446,6 +1520,25 @@ private struct SplitRatioAccessor: NSViewRepresentable {
                 // `capture()`, matching the codebase's notification-closure pattern (e.g. ControlServer).
                 MainActor.assumeIsolated { self?.capture() }
             }
+            // `session.resize` stores a new fraction on the session and posts this (object-scoped to the
+            // session) to move the LIVE divider — the programmatic analogue of a user drag. Unlike the
+            // one-shot restore in `layout()`, it fires on every resize command.
+            applyObserver = NotificationCenter.default.addObserver(
+                forName: .agtermApplySplitRatio, object: session, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.applyRatio() }
+            }
+        }
+
+        /// Move the live divider to the session's stored `splitRatio` (set by `session.resize` just before
+        /// it posts `.agtermApplySplitRatio`). The follow-on `didResizeSubviews` → `capture()` is a no-op:
+        /// the captured fraction equals the value we just set, so `capture()`'s near-equal guard skips it.
+        private func applyRatio() {
+            guard let split = splitView, let ratio = session.splitRatio else { return }
+            let total = split.bounds.width
+            // no real width yet (mid-relayout): re-arm the one-shot `layout()` restore so it applies the
+            // new fraction on the next pass instead of leaving the model ahead of the divider.
+            guard total > 1 else { restored = false; return }
+            split.setPosition(total * CGFloat(ratio), ofDividerAt: 0)
         }
 
         /// Mask the split's divider out of the titlebar zone — the strip ABOVE the window's titlebar boundary
@@ -1515,6 +1608,7 @@ private struct SplitRatioAccessor: NSViewRepresentable {
         deinit {
             saveWorkItem?.cancel()
             if let resizeObserver { NotificationCenter.default.removeObserver(resizeObserver) }
+            if let applyObserver { NotificationCenter.default.removeObserver(applyObserver) }
         }
     }
 }

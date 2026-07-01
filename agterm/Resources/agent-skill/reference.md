@@ -113,6 +113,14 @@ process — what it is running — omitted when the pane sits at its shell promp
 - `session focus [left|right|other] [--target] [--window W]` — move keyboard focus between the two
   split panes (`other` toggles, the default). Errors when the session has no split. Works whether the
   split is shown side-by-side or hidden (maximized) — when hidden, focusing a pane swaps which one shows.
+- `session resize (--split-ratio R | --grow-left D | --grow-right D) [--target] [--window W]` — move the
+  split DIVIDER (the divider is otherwise mouse-drag only; there is no GUI/menu/keymap action, so bind a
+  key by mapping a `command "agtermctl session resize …"` custom action). Provide exactly one form:
+  `--split-ratio` sets the absolute left-pane fraction (`0..1`); `--grow-left D` / `--grow-right D` nudge
+  it by the fraction `D` (grow-left shrinks the right pane and vice-versa). The result is clamped to
+  `0.05..0.95` and persisted, and the applied (clamped) fraction is printed (and returned as `result.ratio`
+  under `--json`). Errors when the session has no split. Resizing a hidden split updates the stored
+  fraction; it takes effect when the split is next shown.
 - `session status <idle|active|completed|blocked> [--blink] [--auto-reset] [--sound NAME] [--target] [--window W]` —
   set the sidebar agent-status glyph. `--blink` pulses it (for attention). `--auto-reset` clears it
   back to idle once the session is visited (use for a one-shot completion flash). `--sound` plays a
@@ -164,6 +172,10 @@ shell (no controlling terminal — `/dev/tty` errors). See examples.md for usage
 - `window move <id> --x X --y Y [--display N]` — top-left position in points, relative to display `N`
   (default the window's current display; y measured from the display top). The window must be open. The
   origin is clamped so an off-screen request keeps a grabbable strip of the window on the target display.
+- `window zoom <id>` — toggle the window between its normal frame and a maximized (fill-screen, NOT
+  native fullscreen) frame, via the standard `NSWindow.zoom`. A second call restores the prior frame.
+  The window must be open. This is the control half of the double-click-on-header gesture (and the green
+  zoom button); `resize`/`move` are control-native, but `zoom` mirrors a GUI action.
 
 `window resize`/`move` are control-native (no GUI equivalent — the title bar already drags-to-resize).
 
