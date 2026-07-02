@@ -173,7 +173,7 @@ never two bundles in one window.
   (3) the `window zoom <id>` subcommand in `agtermctlKit`, (4) `.windowZoom` in `windowCommandsRoundTrip`
   (`ControlProtocolTests`) + the e2e `testWindowZoom` plus the gesture tests
   `testDoubleClickHeaderZoomsAndRestores` / `testDoubleClickHeaderHonorsNoneSetting` /
-  `testHeaderButtonsStillReceiveClicksOverControlArea` / `testDragHeaderMovesWindow` in `ControlAPIUITests`.
+  `testHeaderButtonsStillReceiveClicksOverControlArea` / `testDragHeaderMovesWindow` in `ControlWindowUITests`.
 - **`window.*` control additions (eight commands, plus `window.zoom`).**
   `window.new` (returns the new id + opens its window), `window.list` (returns `windows` with each window's
   `open`/`active` flag), `window.select` (raise-or-open), `window.close` (`WindowRegistry.close` → standard

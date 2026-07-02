@@ -13,7 +13,8 @@ paths:
   - "agtermCore/Sources/agtermCore/CLIInstall.swift"
   - "agtermCore/Sources/agtermCore/AgentHooksInstall.swift"
   - "agtermCore/Sources/agtermCore/SkillInstall.swift"
-  - "agtermUITests/ControlAPIUITests.swift"
+  - "agtermUITests/Control*.swift"
+  - "agtermUITests/SessionTextUITests.swift"
   - "agterm/Resources/agent-skill/**"
 ---
 
@@ -216,7 +217,7 @@ paths:
   flag in `ControlProtocol.swift` (reuses `ControlArgs.mode`), (2) the `.sessionScratch` dispatch arm
   (`scratchSession`) in `ControlServer` + `scratch:` in the tree builder,
   (3) the `session scratch` subcommand in `agtermctlKit`, (4) round-trip in `ControlProtocolTests` +
-  the e2e `testSessionScratchToggle` in `ControlAPIUITests`.
+  the e2e `testSessionScratchToggle` in `ControlOverlaySplitUITests`.
   `session.focus` moves keyboard focus between the two split panes — `args.pane` is `left`|`right`|`other`
   (`other` toggles, the default); it errors when the session has no split (works whether the split is
   shown side-by-side or hidden — when hidden, focusing a pane swaps which one shows maximized),
@@ -241,7 +242,7 @@ paths:
   observer in `ContentView`), (3) the `session resize --split-ratio|--grow-left|--grow-right` subcommand
   (`Resize`, `validate()`-guarded exactly-one) in `agtermctlKit` + the `result.ratio` format arm in `SocketClient`,
   (4) round-trip in `ControlProtocolTests` + `AppStoreTests` (clamp/apply) + `CommandsTests` (validate/mapping)
-  + `SocketClientTests` (format) + the e2e `testSessionResizeSplitDivider` in `ControlAPIUITests`.
+  + `SocketClientTests` (format) + the e2e `testSessionResizeSplitDivider` in `ControlOverlaySplitUITests`.
   `session.go` navigates BETWEEN sessions — `args.to` is `next`|`prev`|`first`|`last`|`next-attention`|`prev-attention`
   and acts on the target store's CURRENT selection (it is RELATIVE, so it resolves the placement store
   via `resolvePlacementStore` rather than a session target — there is NO `--target`),
@@ -331,7 +332,7 @@ paths:
   (`validate()` guards the flag combos, re-enforced SERVER-SIDE in `readText`), (4) round-trip tests in
   `ControlProtocolTests` + the e2e (`testSessionTextReturnsBuffer`, `testSessionTextSplitPaneWithoutSplitErrors`,
   `testSessionTextRejectsInvalidArgsServerSide`, `testSessionTextBlankScreenReturnsOkEmpty`) in `SessionTextUITests`
-  (a `ControlAPIUITests` extension split into its own file to keep that suite under the swiftlint file_length limit).
+  (a `ControlAPITestCase` subclass in its own file, sharing the harness base with the `Control*UITests` suites).
   `session.search` searches the target session's live scrollback (target = session) — it SELECTS the
   target (so the bar + match highlights render and the surface is realized,
   bounded-realize-polled like `session.type`), then drives the FOCUSED surface over `ghostty_surface_binding_action`:
@@ -502,7 +503,7 @@ paths:
   Four-point keep-in-sync audit: (1) `case sidebar` in `ControlProtocol.swift` (reuses `ControlArgs.mode`),
   (2) the `.sidebar` dispatch arm (`setSidebar`) in `ControlServer`, (3) the `sidebar` subcommand in
   `agtermctlKit`, (4) round-trip in `ControlProtocolTests` + the e2e `testSidebarShowHideToggle` (sidebar
-  hide removes the `session-row`s from the AX tree) in `ControlAPIUITests`.
+  hide removes the `session-row`s from the AX tree) in `ControlSidebarStatusUITests`.
   `theme.set` sets + persists a theme by name (`args.name`; nil/empty = ghostty's built-in / "default
   ghostty", NOT the seeded `agterm` app default — see the Theme picker section) — the control half of
   the Settings picker / the `.themes` palette commit, the SAME `SettingsModel.setTheme` persist+apply
@@ -533,7 +534,7 @@ paths:
   (reuses `ControlArgs.mode`; adds `flagged` to `ControlSessionNode`), (2) the `.sessionFlag` dispatch
   arm (`flagSession`) in `ControlServer`, (3) the `session flag on|off|toggle|clear` subcommand (`FlagCommand`)
   in `agtermctlKit`, (4) round-trip in `ControlProtocolTests` + the e2e `testSessionFlagAndSidebarModeFlagged`
-  in `ControlAPIUITests`.
+  in `ControlSidebarStatusUITests`.
   `sidebar.mode` (frontmost window) flips the sidebar VIEW between the workspace tree and the flat flagged
   working-set list — `args.mode` is `tree`|`flagged`|`toggle` (delta-computed against `AppStore.sidebarMode`
   so it's idempotent, unknown mode = error), drives `setSidebarViewMode` → `AppStore.setSidebarMode`.
@@ -544,7 +545,7 @@ paths:
   `ControlArgs.mode`), (2) the `.sidebarMode` dispatch arm (`setSidebarViewMode`) in `ControlServer`,
   (3) the `sidebar mode tree|flagged|toggle` subcommand (`Mode`, alongside the `Visibility` default)
   in `agtermctlKit`, (4) round-trip in `ControlProtocolTests` + the e2e `testSessionFlagAndSidebarModeFlagged`
-  in `ControlAPIUITests`.
+  in `ControlSidebarStatusUITests`.
   `sidebar.expand`/`sidebar.collapse` expand every workspace / collapse all but the active one in a window's
   sidebar TREE — `expand` drives `AppActions.expandAllWorkspaces(in:)`, `collapse` drives `collapseOtherWorkspaces(in:)`
   (collapse keeps the ACTIVE session's workspace expanded and scrolls its row into view).
@@ -569,7 +570,7 @@ paths:
   in `ControlServer`, (3) the `sidebar expand`/`sidebar collapse` subcommands (`Expand`/`Collapse` on
   `ClientOptions` for `--window`, alongside the `Visibility` default + `Mode`) in `agtermctlKit`,
   (4) round-trip (incl. the windowed variant) in `ControlProtocolTests` + the e2e `testSidebarExpandCollapse`
-  in `ControlAPIUITests`.
+  in `ControlSidebarStatusUITests`.
   `workspace.focus` (target = workspace) collapses the sidebar tree to a single workspace — `args.mode`
   is `on`|`off`|`toggle` (`off` unfocuses only when the target is the currently focused one,
   `toggle` flips; delta-computed against `AppStore.focusedWorkspaceID` so it's idempotent,
@@ -582,7 +583,7 @@ paths:
   Four-point keep-in-sync audit: (1) `case workspaceFocus = "workspace.focus"` in `ControlProtocol.swift`
   (reuses `ControlArgs.mode`), (2) the `.workspaceFocus` dispatch arm (`focusWorkspace`) in `ControlServer`,
   (3) the `workspace focus on|off|toggle` subcommand (`Focus`) in `agtermctlKit`,
-  (4) round-trip in `ControlProtocolTests` + the e2e `testWorkspaceFocusHidesOtherWorkspaces` in `ControlAPIUITests`
+  (4) round-trip in `ControlProtocolTests` + the e2e `testWorkspaceFocusHidesOtherWorkspaces` in `ControlSidebarStatusUITests`
   plus the `FocusWorkspaceUITests` XCUITest.
   `tree` now also surfaces, on each `ControlSessionNode`, `foreground`/`splitForeground` — the LIVE foreground-process
   argv of the main + split panes (nil/omitted at the shell prompt), the SAME `ForegroundProcess.command(for:shellBasename:)`
