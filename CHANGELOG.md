@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.5.2 - 2026-07-01
+
+### Improvements
+
+- per-session solid background color for session.background #68 @umputun
+- split toolbar icon shows which pane is visible when collapsed #67 @umputun
+
+## v0.5.1 - 2026-07-01
+
+### Bug Fixes
+
+- hide the sidebar scroll bar when the tree fits, instead of always showing a track under macOS "Show scroll bars: Always" ab1d4a8 @umputun
+
+## v0.5.0 - 2026-07-01
+
+### New Features
+
+- per-session background watermark, set via session.background #32 @fkirill
+- read a session's scrollback over the control API with session.text #46 @paul-nameless
+- show the app-wide unseen-notification count as a Dock icon badge #48 @vnazarenko
+
+### Improvements
+
+- show the configured keyboard shortcut in toolbar and sidebar tooltips #62 @taras-mrtn
+
 ## v0.4.2 - 2026-07-01
 
 ### Bug Fixes

@@ -206,7 +206,7 @@ struct Session: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Session commands.",
         subcommands: [New.self, Close.self, Select.self, Go.self, Rename.self, Move.self, TypeText.self,
-                      Split.self, Scratch.self, Focus.self, Resize.self, Copy.self, Status.self, FlagCommand.self,
+                      Split.self, Scratch.self, Focus.self, Resize.self, Copy.self, Text.self, Status.self, FlagCommand.self,
                       Search.self, Background.self, Overlay.self]
     )
 
@@ -407,6 +407,32 @@ struct Session: ParsableCommand {
         }
     }
 
+    struct Text: RequestCommand {
+        static let configuration = CommandConfiguration(abstract: "Print a session's terminal buffer as plain text (does not touch the system clipboard).")
+        @Flag(name: .long, help: "Read the full screen + scrollback instead of just the visible screen.") var all = false
+        @Option(name: .long, help: "Keep only the last N lines of the full buffer.") var lines: Int?
+        @Option(name: .long, help: "Which pane to read: left (main) or right (split). Defaults to the focused pane.") var pane: String?
+        @OptionGroup var target: TargetOptions
+        @OptionGroup var options: ClientOptions
+
+        func validate() throws {
+            if all, lines != nil {
+                throw ValidationError("use either --all or --lines, not both")
+            }
+            if let lines, lines <= 0 {
+                throw ValidationError("--lines must be greater than 0")
+            }
+            if let pane, !["left", "right"].contains(pane) {
+                throw ValidationError("--pane must be left or right")
+            }
+        }
+
+        func makeRequest() throws -> ControlRequest {
+            ControlRequest(cmd: .sessionText, target: target.target,
+                           args: options.withWindow(ControlArgs(pane: pane, all: all ? true : nil, lines: lines)))
+        }
+    }
+
     struct Status: RequestCommand {
         static let configuration = CommandConfiguration(abstract: "Set a session's agent status indicator.")
         @Argument(help: "State: idle, active, completed, or blocked.") var state: String
@@ -478,8 +504,8 @@ struct Session: ParsableCommand {
     struct Background: ParsableCommand {
         static let configuration = CommandConfiguration(
             commandName: "background",
-            abstract: "Set or clear a session's background watermark (image or rasterized text).",
-            subcommands: [Image.self, Text.self, Clear.self]
+            abstract: "Set or clear a session's background (image, rasterized text, or solid color).",
+            subcommands: [Image.self, Text.self, Color.self, Clear.self]
         )
 
         /// Shared input validation against the host-free `WatermarkConfig`, so a bad value is a clean
@@ -548,8 +574,23 @@ struct Session: ParsableCommand {
             }
         }
 
+        struct Color: RequestCommand {
+            static let configuration = CommandConfiguration(
+                abstract: "Set a solid background color for the terminal (honors the Settings window translucency).")
+            @Argument(help: "Background color as #rrggbb.") var color: String
+            @OptionGroup var target: TargetOptions
+            @OptionGroup var options: ClientOptions
+
+            func validate() throws { try Background.validate(color: color) }
+
+            func makeRequest() throws -> ControlRequest {
+                ControlRequest(cmd: .sessionBackground, target: target.target,
+                               args: options.withWindow(ControlArgs(mode: "color", color: color)))
+            }
+        }
+
         struct Clear: RequestCommand {
-            static let configuration = CommandConfiguration(abstract: "Remove the session's background watermark.")
+            static let configuration = CommandConfiguration(abstract: "Remove the session's background (watermark or solid color).")
             @OptionGroup var target: TargetOptions
             @OptionGroup var options: ClientOptions
 

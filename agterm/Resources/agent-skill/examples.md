@@ -137,11 +137,11 @@ magick favicon.png -filter point -resize 256x256 /tmp/big.png
 
 Outside agterm (`AGTERM_ENABLED` unset) there is no overlay — fall back to `open img.png` (Preview).
 
-## Set a background watermark
+## Set a background watermark or color
 
 A persistent backdrop behind the terminal grid (distinct from `show-image.sh`, which is a transient
-overlay). Image or rasterized text, per session, auto-fitting the window (and re-fitting on resize);
-it survives a relaunch.
+overlay). An image or rasterized-text watermark (auto-fitting the window, re-fitting on resize), or a
+solid terminal background color — per session, surviving a relaunch.
 
 ```bash
 # rasterized text watermark on this session, faint
@@ -150,13 +150,17 @@ agtermctl session background text "STAGING" --color '#ff5500' --opacity 0.15 --t
 # an image (PNG/JPEG), scaled to cover the window
 agtermctl session background image /abs/logo.png --fit cover --opacity 0.2 --target "$AGTERM_SESSION_ID"
 
+# a solid background color — e.g. mark a PROD session so it can't be mistaken for a scratch one
+agtermctl session background color '#3a0d0d' --target "$AGTERM_SESSION_ID"
+
 # remove it
 agtermctl session background clear --target "$AGTERM_SESSION_ID"
 ```
 
 `--opacity` is 0.0–1.0; `--fit` is `contain` (default) / `cover` / `stretch` / `none`; `--position` is
-`center` (default) or an edge/corner anchor. A watermark renders the pane opaque (overriding window
-translucency), so the image is always visible.
+`center` (default) or an edge/corner anchor. An image/text watermark renders the pane opaque (overriding
+window translucency), so it is always visible; a `color` takes no opacity and honors the Settings window
+translucency (solid when off, blurred/translucent when on).
 
 ## Toggle the scratch terminal
 
@@ -214,6 +218,20 @@ agtermctl sidebar collapse --window "$AGTERM_WINDOW_ID"  # collapse a specific w
 ```bash
 sel=$(agtermctl session copy --json | jq -r '.result.text')
 agtermctl session type "$sel" --target "$other"
+```
+
+## Read a session's buffer as text
+
+`session text` returns the terminal buffer as plain text in `result.text` — the visible screen by
+default, the whole scrollback with `--all`, or the last N lines with `--lines N`. Pipe it into
+`grep`/`fzf` to extract URLs, paths, etc.
+
+```bash
+agtermctl session text                         # the visible screen of the focused pane
+agtermctl session text --lines 50              # the last 50 lines of the buffer
+agtermctl session text --pane right            # the split pane (errors if there is no split)
+# extract every URL from the full scrollback:
+agtermctl session text --all --json | jq -r '.result.text' | grep -oE 'https?://[^ ]+'
 ```
 
 ## Search the terminal scrollback

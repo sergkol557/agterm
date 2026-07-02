@@ -86,7 +86,7 @@ paths:
   The skill is a REFERENCE/knowledge skill (both user-invocable via `/agterm` and model-triggered,
   `allowed-tools: Bash(agtermctl *)`; the agent-neutral `description` carries the trigger nouns since
   Codex may ignore the extra `when_to_use` field — unknown frontmatter is harmless),
-  authored at `agterm/Resources/agent-skill/` (`SKILL.md` overview + model + addressing + 49-command
+  authored at `agterm/Resources/agent-skill/` (`SKILL.md` overview + model + addressing + 50-command
   summary + the image-display helper + a troubleshooting/reporting pointer;
   `reference.md` full per-command detail + keymap format; `examples.md` agtermctl recipes;
   `troubleshooting.md` diagnosing the common problems (keymap editor, custom actions,
@@ -156,10 +156,10 @@ paths:
   exact `uuidString` (case-insensitive), or a git-style unique prefix.
   Zero prefix hits → `notFound` error, ≥2 → `ambiguous` error listing the candidates.
   `--target` defaults to `active`, so scripts rarely type an id and never for "the current one".
-- **Command catalog (49 commands):**
+- **Command catalog (50 commands):**
   - `tree`
   - `workspace.new`/`workspace.rename`/`workspace.delete`/`workspace.select`/`workspace.move`/`workspace.focus`
-  - `session.new`/`session.close`/`session.select`/`session.rename`/`session.move`/`session.type`/`session.split`/`session.scratch`/`session.focus`/`session.resize`/`session.go`/`session.copy`/`session.search`/`session.status`/`session.flag`/`session.background`/`session.overlay.open`/`session.overlay.close`/`session.overlay.result`
+  - `session.new`/`session.close`/`session.select`/`session.rename`/`session.move`/`session.type`/`session.split`/`session.scratch`/`session.focus`/`session.resize`/`session.go`/`session.copy`/`session.text`/`session.search`/`session.status`/`session.flag`/`session.background`/`session.overlay.open`/`session.overlay.close`/`session.overlay.result`
   - `quick`
   - `sidebar`/`sidebar.mode`/`sidebar.expand`/`sidebar.collapse`
   - `notify`
@@ -305,6 +305,32 @@ paths:
   — it does NOT touch the system clipboard (automation pipes the returned text into another `session.type`);
   selection is surface state independent of focus, so any realized session can be read,
   and no/empty selection is a `no selection` error.
+  `session.text` reads the target surface's screen buffer as PLAIN TEXT (no ANSI) via `GhosttySurfaceView.readScreenText(all:lines:)`
+  (a `ghostty_selection_s` spanning VIEWPORT top-left→bottom-right by default,
+  SCREEN when `args.all || args.lines != nil`, `rectangle = false`;
+  `ghostty_surface_read_text` → copy out of `ghostty_text_s` → `ghostty_surface_free_text`) and returns it in `result.text`
+  — `args.all` adds scrollback, `args.lines N` keeps the last N CONTENT lines (trailing blank grid rows
+  trimmed so a non-scrolled screen returns content, not padding), and `args.pane` (`left`→main,
+  `right`→split-else-`session has no split` error, omitted→the ON-SCREEN surface via the shared
+  `Session.onScreenSurface` (scratch-when-covering else the focused pane, the SAME resolution `session.search`
+  uses), so a no-`pane` read returns what's visible, not a pane hidden under the scratch) picks the pane.
+  `args.all`+`args.lines` are mutually exclusive and `args.lines` must be > 0 — validated SERVER-SIDE in
+  `readText` (mirroring the CLI `validate()`), NOT only CLI-side, so a raw socket client can't bypass it
+  (an unchecked `lines ≤ 0` would otherwise fall through to the full buffer).
+  UNLIKE `session.focus`, the `pane` here is `left|right` ONLY (no `other`).
+  A genuinely BLANK screen reads `ok` with an empty string (NOT an error, on purpose — differs from `session.copy`'s
+  `no selection`), but a FAILED `ghostty_surface_read_text` is a `failed to read surface buffer` error:
+  `readScreenText` returns `""` for the empty read and nil ONLY for a real failure, which `readText` maps
+  to the error (so a caller can tell a blank terminal from a broken read).
+  Plain text only — the pinned libghostty exposes only `ghostty_surface_read_text` (no per-cell SGR),
+  so `--ansi` is out of scope until a styled surface read lands upstream and the pin is bumped.
+  Four-point keep-in-sync audit for `session.text`: (1) `case sessionText = "session.text"` + new `ControlArgs.all: Bool?`/`lines: Int?`
+  (reuses `pane` + `ControlResult.text`) in `ControlProtocol.swift`, (2) the `.sessionText` dispatch arm (`readText`)
+  in `ControlServer`, (3) the `session text [--all] [--lines N] [--pane left|right]` subcommand in `agtermctlKit`
+  (`validate()` guards the flag combos, re-enforced SERVER-SIDE in `readText`), (4) round-trip tests in
+  `ControlProtocolTests` + the e2e (`testSessionTextReturnsBuffer`, `testSessionTextSplitPaneWithoutSplitErrors`,
+  `testSessionTextRejectsInvalidArgsServerSide`, `testSessionTextBlankScreenReturnsOkEmpty`) in `SessionTextUITests`
+  (a `ControlAPIUITests` extension split into its own file to keep that suite under the swiftlint file_length limit).
   `session.search` searches the target session's live scrollback (target = session) — it SELECTS the
   target (so the bar + match highlights render and the surface is realized,
   bounded-realize-polled like `session.type`), then drives the FOCUSED surface over `ghostty_surface_binding_action`:
@@ -579,18 +605,27 @@ paths:
   (4) round-trip (`restoreClearRoundTrips` + `treeSessionNodeRoundTripsWithForeground`/`…OmitsForegroundWhenNil`)
   in `ControlProtocolTests` + the e2e (`testTreeExposesForegroundProcess`,
   `testRestoreClearSucceeds`) in `ControlAPIUITests`.
-  `session.background` (target = session) sets or clears a per-session background watermark composited
-  behind the terminal grid by libghostty `background-image*` keys — `args.mode` is `image`/`text`/`clear`:
+  `session.background` (target = session) sets or clears a per-session background composited behind the
+  terminal grid — `args.mode` is `image`/`text`/`color`/`clear`.
+  `image`/`text` are watermarks driven by libghostty `background-image*` keys:
   `image` needs `args.path` (PNG/JPEG, validated for format + existence + no control chars in the path),
   `text` needs `args.text` (capped at 256 chars; + optional `args.color` #rrggbb, default the terminal
-  foreground), and both accept `args.opacity` (0...1)/`args.fit`/`args.position`/`args.repeats` — opacity/color/fit/position
-  validated against the shared host-free `WatermarkConfig`, used by BOTH the CLI `validate()` and the server.
+  foreground), and both accept `args.opacity` (0...1)/`args.fit`/`args.position`/`args.repeats`.
+  `color` is a SOLID terminal background color driven by the `background` key: it needs `args.color` (#rrggbb)
+  and takes NO per-call opacity — it is drawn at the Settings WINDOW translucency (solid when off),
+  emitted as `background-opacity = <windowOpacity>` at apply time so the color honors the user's opacity/blur
+  instead of forcing itself opaque (unlike the image/text watermark, which pins `background-opacity = 1`
+  so the image shows).
+  opacity/color/fit/position validated against the shared host-free `WatermarkConfig`,
+  used by BOTH the CLI `validate()` and the server.
   The `BackgroundWatermark` spec (host-free, `Codable`) is persisted in `SessionSnapshot` (survives restart)
   via `AppStore.setBackgroundWatermark`, then applied to the session main + split surfaces as a PER-SURFACE
   ghostty config overlay: `GhosttyApp.configWithOverlay` builds the same base files + an overlay file
-  (`WatermarkConfig.overlayText`: the `background-image*` lines + `background-opacity = 1` so the image
-  shows even under window translucency, which pins the global `background-opacity` to 0, + a `font-size`
-  line so the per-session cmd-+/- zoom is not reset by the push), and `GhosttySurfaceView.applyWatermarkFromSession`
+  (`WatermarkConfig.overlayText`: for image/text the `background-image*` lines + `background-opacity = 1`
+  so the image shows even under window translucency, which pins the global `background-opacity` to 0;
+  for `color` a `background = <hex>` line + `background-opacity = <windowOpacity>` (passed in from
+  `GhosttyApp.shared.windowOpacity`) so the color honors translucency instead of forcing itself opaque;
+  plus a `font-size` line so the per-session cmd-+/- zoom is not reset by the push), and `GhosttySurfaceView.applyWatermarkFromSession`
   calls `ghostty_surface_update_config`, RETAINING each per-surface config in `ownedConfigs` and freeing
   it only on surface teardown (safe — the consumer is gone — unlike the never-freed app-wide config).
   libghostty auto-fits the image to the surface and RE-FITS on resize (no app-side resize code);
@@ -601,20 +636,28 @@ paths:
   `applyConfig`, WIPING any watermark — so `GhosttyApp.reloadConfig` re-resolves the theme colors and
   then calls `reapplyWatermarkIfNeeded` on each surface AFTER the broadcast to re-assert it (the theme
   colors first, so a default-tinted `.text` watermark re-renders with the new foreground, not the old).
+  A `.color` background bakes the window opacity into its `background-opacity` at apply time, so it must
+  RE-TRACK the Settings translucency slider: `SettingsModel.apply` re-asserts every `.color` surface
+  (`GhosttySurfaceView.reapplyColorBackgroundIfNeeded`, guarded to `.color` so image/text aren't rebuilt
+  per tick) right AFTER `applyWindowTranslucency` updates `GhosttyApp.windowOpacity`, on any opacity
+  change — the `reloadConfig` re-assert alone reads a STALE opacity (it runs before the update) and a
+  within-range drag doesn't reload at all, so neither path alone keeps a color session tracking the slider.
   `BackgroundWatermark.fit`/`position` are typed `Fit`/`Position` `CaseIterable` enums (like `Kind`), not
   raw `String` — the raw values match ghostty's keys so they serialize identically, and a bad value can't
-  reach a config line (only `imagePath` stays free text, re-validated on emit by `overlayText`, closing the
-  restore-path injection as defense-in-depth). The spec is READ back on each `tree` node's `background` field.
+  reach a config line (`imagePath`/`colorHex` stay free text, re-validated on emit by `overlayText`, closing
+  the restore-path injection as defense-in-depth). The spec is READ back on each `tree` node's `background` field.
   Four-point keep-in-sync audit for `session.background`: (1) `case sessionBackground = "session.background"`
   + `ControlArgs.path`/`color`/`opacity`/`fit`/`position`/`repeats` in `ControlProtocol.swift` (+ `background`
   on `ControlSessionNode` for the read-back),
   (2) the `.sessionBackground` dispatch arm (`setBackground`, validating + building the spec, then `applyWatermark`
   to the realized surfaces) in `ControlServer` (+ `background:` populated in the tree builder), (3) the
-  `session background image|text|clear` subcommands in `agtermctlKit` (shared opacity/color/fit/position
-  `validate()`), (4) round-trip in `ControlProtocolTests` (incl. `treeSessionNodeRoundTripsWithBackground`)
-  + `WatermarkConfigTests` + `WatermarkStorageTests` + `CommandsTests` (CLI parse + bad-arg rejection)
-  + the e2e `testSessionBackgroundSetClearAndValidation` in `ControlAPIUITests` (set/clear + tree read-back).
+  `session background image|text|color|clear` subcommands in `agtermctlKit` (shared opacity/color/fit/position
+  `validate()`; `color` takes color only, no opacity), (4) round-trip in `ControlProtocolTests` (incl.
+  `treeSessionNodeRoundTripsWithBackground` + `backgroundWatermarkColorKindSerializes`)
+  + `WatermarkConfigTests` (incl. the `color*` overlay cases) + `WatermarkStorageTests` + `CommandsTests`
+  (CLI parse + bad-arg rejection) + the e2e `testSessionBackgroundSetClearAndValidation` in `ControlAPIUITests`
+  (image/text/color set/clear + tree read-back).
   **Agent-skill mirror (HARD keep-in-sync, 4th surface):** all commands are documented in the bundled
   `agterm/Resources/agent-skill/` (SKILL.md summary, reference.md detail,
-  examples.md recipes) and the command count there is bumped to 49 to match.
+  examples.md recipes) and the command count there is bumped to 50 to match.
 

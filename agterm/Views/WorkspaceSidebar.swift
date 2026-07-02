@@ -276,6 +276,9 @@ struct WorkspaceSidebar: NSViewRepresentable {
         scroll.identifier = NSUserInterfaceItemIdentifier("agterm-sidebar-scroll")
         scroll.documentView = outline
         scroll.hasVerticalScroller = true
+        // hide the scroller when the tree fits (the common case): without this, macOS set to
+        // "Show scroll bars: Always" paints a permanent track over the short, non-overflowing tree.
+        scroll.autohidesScrollers = true
         // transparent: the window's backgroundColor (the terminal color, set by
         // WindowAppearance) shows through the sidebar's translucent material so the whole
         // column — including the strip behind the titlebar — reads as one dark surface.
@@ -1212,7 +1215,9 @@ struct WorkspaceSidebar: NSViewRepresentable {
 
         @objc private func menuNewSession(_ sender: NSMenuItem) {
             guard let node = sender.representedObject as? SidebarNode else { return }
-            addSession(toWorkspace: node.id, cwd: FileManager.default.homeDirectoryForCurrentUser.path)
+            // resolve the cwd via the same new-session-directory setting as AppActions.newSession(), so the
+            // workspace-row New Session honors it too (home / current session's cwd / a fixed custom dir).
+            addSession(toWorkspace: node.id, cwd: actions.resolvedNewSessionCwd())
         }
 
         @objc private func menuDeleteWorkspace(_ sender: NSMenuItem) {

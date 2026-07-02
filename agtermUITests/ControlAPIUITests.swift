@@ -7,7 +7,7 @@ import XCTest
 /// assert against the response and the `workspaces.json` file-polling oracle the sidebar tests use.
 @MainActor
 final class ControlAPIUITests: XCTestCase {
-    private var app: XCUIApplication!
+    var app: XCUIApplication!
     private var stateDir: URL!
     private var socketPath: String!
     private var markerDir: URL!
@@ -191,6 +191,26 @@ final class ControlAPIUITests: XCTestCase {
         let bg = try XCTUnwrap(setNode["background"] as? [String: Any], "tree should expose the set watermark")
         XCTAssertEqual(bg["kind"] as? String, "text", "the watermark kind should read back")
         XCTAssertEqual(bg["text"] as? String, "STAGING", "the watermark text should read back")
+
+        // a solid background color reads back with kind "color" and the hex. The spec carries no opacity —
+        // a color honors the Settings window translucency at render time.
+        let colorSet = try sendCommand(##"{"cmd":"session.background","target":"\##(sid)","args":{"mode":"color","color":"#ff0000"}}"##)
+        XCTAssertEqual(colorSet["ok"] as? Bool, true, "session.background color should succeed: \(colorSet)")
+        let afterColor = try sendCommand(#"{"cmd":"tree"}"#)
+        let colorNode = try XCTUnwrap(sessionNode(afterColor, id: sid), "the session should appear in the tree")
+        let colorBg = try XCTUnwrap(colorNode["background"] as? [String: Any], "tree should expose the color background")
+        XCTAssertEqual(colorBg["kind"] as? String, "color", "the color kind should read back")
+        XCTAssertEqual(colorBg["colorHex"] as? String, "#ff0000", "the color hex should read back")
+
+        let badColor = try sendCommand(#"{"cmd":"session.background","target":"\#(sid)","args":{"mode":"color","color":"red"}}"#)
+        XCTAssertEqual(badColor["ok"] as? Bool, false, "a malformed color should be rejected")
+
+        // color mode with no color hits the "requires a color" guard (unreachable from the CLI, whose
+        // argument is required, so the raw-JSON e2e is the only cover for this arm).
+        let emptyColor = try sendCommand(#"{"cmd":"session.background","target":"\#(sid)","args":{"mode":"color"}}"#)
+        XCTAssertEqual(emptyColor["ok"] as? Bool, false, "color mode with no color should be rejected")
+        XCTAssertEqual(emptyColor["error"] as? String, "session.background color requires a color",
+                       "the empty-color guard should reject it")
 
         let missing = try sendCommand(#"{"cmd":"session.background","target":"\#(sid)","args":{"mode":"image","path":"/no/such.png"}}"#)
         XCTAssertEqual(missing["ok"] as? Bool, false, "a missing image file should be rejected")
@@ -1026,7 +1046,7 @@ final class ControlAPIUITests: XCTestCase {
     }
 
     /// The id of the seeded (active) session from the tree.
-    private func activeSessionID() throws -> String {
+    func activeSessionID() throws -> String {
         let tree = try sendCommand(#"{"cmd":"tree"}"#)
         let result = try XCTUnwrap(tree["result"] as? [String: Any], "tree should carry a result")
         let t = try XCTUnwrap(result["tree"] as? [String: Any], "result should carry a tree")
@@ -2366,7 +2386,7 @@ final class ControlAPIUITests: XCTestCase {
     }
 
     /// Build a `session.type` request line with JSON-escaped `text` (covers the newline and the quoted path).
-    private func typeRequest(text: String, target: String? = nil, select: Bool) -> String {
+    func typeRequest(text: String, target: String? = nil, select: Bool) -> String {
         var obj: [String: Any] = ["cmd": "session.type", "args": ["text": text, "select": select]]
         if let target { obj["target"] = target }
         let data = try! JSONSerialization.data(withJSONObject: obj)
@@ -2441,7 +2461,7 @@ final class ControlAPIUITests: XCTestCase {
 
     /// Polls the hermetic snapshot file until the (single seeded workspace's) first session's `isSplit`
     /// equals `expected`.
-    private func pollActiveSessionSplit(_ expected: Bool, timeout: TimeInterval) -> Bool {
+    func pollActiveSessionSplit(_ expected: Bool, timeout: TimeInterval) -> Bool {
         stateDir.pollSnapshot(equals: expected, timeout: timeout) { obj in
             guard let workspaces = obj["workspaces"] as? [[String: Any]],
                   let sessions = workspaces.first?["sessions"] as? [[String: Any]] else { return nil }
@@ -2578,7 +2598,7 @@ final class ControlAPIUITests: XCTestCase {
     /// Connect to the app's control socket, send `line` (newline-terminated), read the single response
     /// line, and parse it as JSON. Retries the connect briefly since the server's scene `.task` may bind a
     /// beat after the window appears.
-    private func sendCommand(_ line: String) throws -> [String: Any] {
+    func sendCommand(_ line: String) throws -> [String: Any] {
         let fd = try connect(to: socketPath)
         defer { close(fd) }
 

@@ -111,6 +111,12 @@ final class SettingsModel {
     /// Persist the system sound played when a session enters `blocked` (nil/empty = none). Not a ghostty
     /// key and nothing renders it continuously, so it only saves — `ControlServer` reads it on demand.
     func setBlockedStatusSoundName(_ name: String?) { settings.blockedStatusSoundName = name; try? settingsStore.save(settings) }
+    /// Persist where a new (⌘T) session opens (nil = the home default). Not a ghostty key and nothing
+    /// renders it continuously — it only affects the NEXT new session, read then by `AppActions.newSession()`
+    /// — so it just saves (no config rewrite / surface reload).
+    func setNewSessionDirectory(_ value: String?) { settings.newSessionDirectory = value; try? settingsStore.save(settings) }
+    /// Persist the fixed directory used when `newSessionDirectory` is `custom` (nil/empty falls back to home).
+    func setNewSessionCustomDirectory(_ value: String?) { settings.newSessionCustomDirectory = value; try? settingsStore.save(settings) }
 
     /// Apply a new background opacity live WITHOUT an immediate save — the live-drag half of the opacity
     /// slider. Updates translucency on every drag tick (apply-without-save) and schedules a debounced
@@ -503,10 +509,20 @@ final class SettingsModel {
         // font size) when the generated config TEXT actually changed. A window-opacity drag within
         // the translucent range, or a blur change, leaves the config identical — re-syncing the
         // window alone is enough and avoids hammering surface rebuilds on every slider tick.
+        let opacityBefore = GhosttyApp.shared.windowOpacity
         if writeGhosttyConfig() {
             reloadConfigClearingSessionZoom()
         }
         applyWindowTranslucency()
+        // a `.color` session background bakes the window opacity into its per-surface `background-opacity`
+        // at apply time, so re-assert those surfaces whenever the opacity changed — reloadConfig's own
+        // re-assert (when the config text changed) runs BEFORE `applyWindowTranslucency` updates the
+        // opacity, and a within-range slider drag doesn't reload at all, so neither path alone keeps a
+        // color session tracking the slider. Guarded to `.color` surfaces so a plain/image/text session
+        // isn't rebuilt on every opacity tick (blur composites at the AppKit level and needs no re-emit).
+        if GhosttyApp.shared.windowOpacity != opacityBefore {
+            for surface in liveSurfaces() { surface.reapplyColorBackgroundIfNeeded() }
+        }
         applyNotificationsEnabled()
         applyCompactToolbar()
         applyNotificationBadgeEnabled()

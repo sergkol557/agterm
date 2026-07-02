@@ -52,6 +52,26 @@ struct ControlProtocolTests {
         }
     }
 
+    @Test func sessionTextRoundTripsWithAllLinesAndPane() throws {
+        let request = ControlRequest(cmd: .sessionText, target: "9f3c",
+                                     args: ControlArgs(pane: "left", all: true, lines: 50))
+        let decoded = try roundTrip(request)
+        #expect(decoded == request)
+        #expect(decoded.cmd == .sessionText)
+        #expect(decoded.args?.all == true)
+        #expect(decoded.args?.lines == 50)
+        #expect(decoded.args?.pane == "left")
+    }
+
+    @Test func sessionTextBareRoundTrips() throws {
+        let request = ControlRequest(cmd: .sessionText)
+        let decoded = try roundTrip(request)
+        #expect(decoded == request)
+        #expect(decoded.args?.all == nil)
+        #expect(decoded.args?.lines == nil)
+        #expect(decoded.args?.pane == nil)
+    }
+
     @Test func sessionTypeWithSelectRoundTrips() throws {
         let request = ControlRequest(cmd: .sessionType, target: "9f3c", args: ControlArgs(text: "ls\n", select: true))
         #expect(try roundTrip(request) == request)
@@ -209,6 +229,7 @@ struct ControlProtocolTests {
             ControlRequest(cmd: .sessionBackground, target: "9f3c",
                            args: ControlArgs(text: "DRAFT", mode: "text", color: "#ff0000",
                                              opacity: 0.15, fit: "contain", position: "center")),
+            ControlRequest(cmd: .sessionBackground, target: "active", args: ControlArgs(mode: "color", color: "#112233")),
             ControlRequest(cmd: .sessionBackground, target: "active", args: ControlArgs(mode: "clear")),
         ]
         for request in cases {
@@ -326,6 +347,25 @@ struct ControlProtocolTests {
         // a decoded-back value equals the original (rawValue mapping is lossless).
         let decoded = try JSONDecoder().decode(BackgroundWatermark.self, from: Data(json.utf8))
         #expect(decoded == watermark)
+    }
+
+    @Test func backgroundWatermarkColorKindSerializes() throws {
+        // the `.color` kind serializes as "color" and carries only the hex (no opacity — a solid color
+        // honors the Settings window translucency at render time). Round-trip through ControlSessionNode too,
+        // so the actual `tree` wire path (not just the struct in isolation) covers the color read-back.
+        let watermark = BackgroundWatermark(kind: .color, colorHex: "#112233")
+        let json = String(decoding: try JSONEncoder().encode(watermark), as: UTF8.self)
+        #expect(json.contains("\"kind\":\"color\""))
+        #expect(try JSONDecoder().decode(BackgroundWatermark.self, from: Data(json.utf8)) == watermark)
+
+        let session = ControlSessionNode(id: "s1", name: "shell", cwd: "/tmp", active: true, split: false,
+                                         background: watermark)
+        let response = ControlResponse(ok: true, result: ControlResult(tree: ControlTree(
+            workspaces: [ControlWorkspaceNode(id: "w1", name: "work", active: true, sessions: [session])])))
+        let node = try roundTrip(response).result?.tree?.workspaces.first?.sessions.first
+        #expect(node?.background == watermark)
+        #expect(node?.background?.kind == .color)
+        #expect(node?.background?.colorHex == "#112233")
     }
 
     @Test func restoreClearRoundTrips() throws {
