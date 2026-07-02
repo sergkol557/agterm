@@ -3,7 +3,7 @@ paths:
   - "agterm/Views/Palette.swift"
   - "agterm/SettingsModel.swift"
   - "agterm/SettingsCatalog.swift"
-  - "agterm/AppActions.swift"
+  - "agterm/AppActions*.swift"
 ---
 
 ## Theme picker

@@ -1,6 +1,6 @@
 ---
 paths:
-  - "agterm/AppActions.swift"
+  - "agterm/AppActions*.swift"
   - "agterm/agtermApp*.swift"
   - "agterm/Views/Palette.swift"
   - "agterm/Views/PaneShortcuts.swift"

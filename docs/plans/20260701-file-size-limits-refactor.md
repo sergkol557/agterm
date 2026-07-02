@@ -226,10 +226,10 @@ Read `.claude/rules/menu-actions.md` and `.claude/rules/windows.md` first. The `
 
 Read `.claude/rules/menu-actions.md` and `.claude/rules/theme-picker.md` first. The public action surface (three keep-in-sync callers) is untouched — all moved methods were already internal.
 
-- [ ] create `AppActions+Palette.swift` (imports agtermCore + AppKit mirroring the parent; short doc noting the preview stored state lives on the main type): move orig 416–666 verbatim (the "Command palettes" + "Theme picker" MARK sections, incl. `setTheme`/`availableThemes`/`currentTheme` — kept for MARK contiguity — and the private `customCommandItems`/`paletteItem(for:in:status:)`/`themeID` helpers which stay private, all callers moving too).
-- [ ] in AppActions.swift: delete orig 416–667 (region + ONE of the two now-adjacent seam blanks — `vertical_whitespace` under `--strict`); drop `private` on exactly four members: `library`, `store` (computed), `themePreviewActive`, `themePreviewOriginal` (stored theme-preview state must stay in the class declaration; its only users move). The other 14 private members stay private (verified caller-by-caller).
-- [ ] gate: `make build` + `cd agtermCore && swift test` + `make lint`; files land ~648 + ~260, type bodies ~330/~158 effective.
-- [ ] docs: menu-actions.md frontmatter — widen `agterm/AppActions.swift` to `agterm/AppActions*.swift`; theme-picker.md — same widening (BOTH files carry theme-picker content: logic in +Palette, stored state in the main file).
+- [x] create `AppActions+Palette.swift` (imports agtermCore + AppKit mirroring the parent; short doc noting the preview stored state lives on the main type): move orig 416–666 verbatim (the "Command palettes" + "Theme picker" MARK sections, incl. `setTheme`/`availableThemes`/`currentTheme` — kept for MARK contiguity — and the private `customCommandItems`/`paletteItem(for:in:status:)`/`themeID` helpers which stay private, all callers moving too).
+- [x] in AppActions.swift: delete orig 416–667 (region + ONE of the two now-adjacent seam blanks — `vertical_whitespace` under `--strict`); drop `private` on exactly four members: `library`, `store` (computed), `themePreviewActive`, `themePreviewOriginal` (stored theme-preview state must stay in the class declaration; its only users move). The other 14 private members stay private (verified caller-by-caller).
+- [x] gate: `make build` + `cd agtermCore && swift test` + `make lint`; files land ~648 + ~260, type bodies ~330/~158 effective. (actuals: AppActions.swift = 648, AppActions+Palette.swift = 260; make build OK, 894 tests in 39 suites, make lint clean.)
+- [x] docs: menu-actions.md frontmatter — widen `agterm/AppActions.swift` to `agterm/AppActions*.swift`; theme-picker.md — same widening (BOTH files carry theme-picker content: logic in +Palette, stored state in the main file).
 
 ### Task 10: AppStore — panes region to +Panes extension
 
