@@ -5,11 +5,11 @@ INSTALL_DIR := $(HOME)/Applications
 RELEASE_APP := build/DerivedData/Build/Products/Release/agterm.app
 
 .DEFAULT_GOAL := help
-.PHONY: help prep generate build run release deploy test lint dist clean sync
+.PHONY: help prep generate build run release deploy build-ctl install-ctl test lint dist clean sync
 
 help: ## list targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
-	  awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-9s\033[0m %s\n", $$1, $$2}'
+	  awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-11s\033[0m %s\n", $$1, $$2}'
 
 prep: ## build libghostty + ghostty resources (one-time, idempotent)
 	./scripts/setup.sh
@@ -31,6 +31,13 @@ deploy: release ## release build + copy to ~/Applications
 	rm -rf "$(INSTALL_DIR)/agterm.app"
 	cp -R "$(RELEASE_APP)" "$(INSTALL_DIR)/agterm.app"
 	@echo "installed $(INSTALL_DIR)/agterm.app"
+
+build-ctl: ## build agtermctl command-line tool (release mode)
+	cd agtermCore && swift build -c release
+
+install-ctl: build-ctl ## build and install agtermctl to /usr/local/bin
+	cp agtermCore/.build/release/agtermctl /usr/local/bin/
+	@echo "installed /usr/local/bin/agtermctl"
 
 sync: ## fetch and merge upstream, build, deploy, clean, and push
 	./scripts/sync.sh

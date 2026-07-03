@@ -93,6 +93,12 @@ if ! make deploy; then
   exit 1
 fi
 
+echo "Running 'make install-ctl'..."
+if ! make install-ctl; then
+  echo "Error: 'make install-ctl' failed!" >&2
+  exit 1
+fi
+
 echo "Running 'make clean'..."
 if ! make clean; then
   echo "Error: 'make clean' failed!" >&2
