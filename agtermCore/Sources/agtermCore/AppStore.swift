@@ -79,7 +79,8 @@ public final class AppStore {
 
     /// Most-recently-selected session ids, front = current. Drives the Ctrl-Tab switcher
     /// (`items[1]` is the previous session). `@ObservationIgnored`: read imperatively by the
-    /// switcher, not by any SwiftUI view, and not persisted.
+    /// switcher, not by any SwiftUI view. Persisted in the snapshot so the switcher's order
+    /// survives a relaunch.
     @ObservationIgnored public private(set) var sessionRecency = RecencyStack<UUID>()
 
     @ObservationIgnored private let persistence: PersistenceStore
@@ -118,6 +119,30 @@ public final class AppStore {
     /// The auto-generated name for the next new workspace (`workspace 1`, `workspace 2`, …).
     public var defaultWorkspaceName: String {
         "workspace \(workspaces.count + 1)"
+    }
+
+    /// Projects this store's workspace/session model into the control-channel `tree` payload. Foreground
+    /// command lookup is supplied by the host because live process inspection is platform-specific.
+    public func controlTree(foreground: (Session) -> [String]? = { _ in nil },
+                            splitForeground: (Session) -> [String]? = { _ in nil }) -> ControlTree {
+        let activeID = selectedSessionID
+        let activeWorkspaceID = activeID.flatMap { workspace(forSession: $0)?.id }
+        let nodes = workspaces.map { workspace in
+            let sessions = workspace.sessions.map { session in
+                let status = session.agentIndicator.status == .idle ? nil : session.agentIndicator.status.rawValue
+                return ControlSessionNode(id: session.id.uuidString, name: session.displayName,
+                                          cwd: session.effectiveCwd, title: session.oscTitle,
+                                          active: session.id == activeID,
+                                          split: session.isSplit, overlay: session.overlayActive,
+                                          scratch: session.scratchActive, flagged: session.flagged,
+                                          foreground: foreground(session),
+                                          splitForeground: splitForeground(session), status: status,
+                                          background: session.backgroundWatermark)
+            }
+            return ControlWorkspaceNode(id: workspace.id.uuidString, name: workspace.name,
+                                        active: workspace.id == activeWorkspaceID, sessions: sessions)
+        }
+        return ControlTree(workspaces: nodes)
     }
 
     /// Creates a workspace and appends it. Clears any active focus so the new (empty)
@@ -298,161 +323,6 @@ public final class AppStore {
         save()
     }
 
-    /// Toggles the one-level split for a session. The second pane's surface is created
-    /// lazily by the detail pane on first show and kept alive when hidden, so this only
-    /// flips the flag. The flag is persisted, so the split is restored on relaunch.
-    public func toggleSplit(_ sessionID: UUID) {
-        guard let session = session(withID: sessionID) else { return }
-        session.isSplit.toggle()
-        // opening marks the session as having a split and moves focus to the new (right) pane; hiding
-        // (toggling off) leaves `hasSplit` and `splitFocused` set so the split indicators persist and
-        // the focused pane is the one shown maximized. Only `closeSplit` clears them.
-        if session.isSplit {
-            session.hasSplit = true
-            session.splitFocused = true
-        }
-        save()
-    }
-
-    /// Sets a session's split-divider left-pane fraction to `ratio`, clamped to the bounds, and persists.
-    /// Returns the applied (clamped) fraction, or nil when the id is unknown. Moving the LIVE divider is
-    /// driven separately by the caller (`session.resize` posts `.agtermApplySplitRatio` to the pane view) —
-    /// this is control-native, so there is no GUI surface that goes through `AppActions`.
-    @discardableResult
-    public func applySplitRatio(_ ratio: Double, forSession id: UUID) -> Double? {
-        guard let session = session(withID: id) else { return nil }
-        let applied = AppStore.clampSplitRatio(ratio)
-        session.splitRatio = applied
-        save()
-        return applied
-    }
-
-    /// Closes the split pane: hides it AND tears down its surface, so a subsequent split
-    /// starts a fresh shell. Used when the split shell exits on its own; resets the focus flag so a
-    /// stale `splitFocused` doesn't point the collapsed view at the gone pane.
-    public func closeSplit(_ sessionID: UUID) {
-        guard let session = session(withID: sessionID) else { return }
-        session.isSplit = false
-        session.hasSplit = false
-        session.splitFocused = false
-        session.splitSurface?.teardown()
-        session.splitSurface = nil
-        session.splitCwd = nil
-        session.splitTitle = nil
-        session.initialSplitCwd = nil
-        session.splitRatio = nil // tearing down the split clears its geometry too, so a fresh split opens even
-        // a search bar pinned to the torn-down split surface would otherwise stay stuck (the weak
-        // `searchSurface` zeroes but `searchActive` stays true), so reset search on the surviving session.
-        session.clearSearch()
-        save()
-    }
-
-    /// The primary pane's shell exited. If a split pane is alive it becomes the session's single
-    /// (non-split) pane and the session survives; otherwise the session is closed. The survivor stays
-    /// in the `splitSurface` slot, shown maximized via `splitFocused`, and its cwd is promoted to the
-    /// session's so a restart restores the single session in the right directory. Called by the primary
-    /// surface's `onExit`.
-    public func closePrimaryPane(_ sessionID: UUID) {
-        guard let session = session(withID: sessionID) else { return }
-        guard session.splitSurface != nil else {
-            closeSession(sessionID)
-            return
-        }
-        session.surface?.teardown()
-        session.surface = nil
-        session.isSplit = false
-        session.hasSplit = false
-        session.splitFocused = true
-        session.splitRatio = nil // promoted to a single pane; a later split should open even, not stale
-        // the command pane is gone — the promoted survivor is a plain shell, so drop the creation command
-        // or a restart would resurrect the exited command instead of restoring the promoted shell.
-        session.initialCommand = nil
-        if let cwd = session.splitCwd { session.currentCwd = cwd }
-        // the primary surface (possibly the search owner) is torn down while the session survives as the
-        // promoted split, so reset search rather than leave a stuck bar pinned to the gone primary.
-        session.clearSearch()
-        save()
-    }
-
-    /// The split pane's shell exited. If the primary is alive the split collapses to it (`closeSplit`);
-    /// otherwise the primary already exited, so this was the last pane and the session is closed. Called
-    /// by the split surface's `onExit`.
-    public func closeSplitPane(_ sessionID: UUID) {
-        guard let session = session(withID: sessionID) else { return }
-        guard session.surface != nil else {
-            closeSession(sessionID)
-            return
-        }
-        closeSplit(sessionID)
-    }
-
-    /// Opens an ephemeral overlay terminal on a session running `command` (e.g. a TUI). The overlay
-    /// surface is created lazily by the detail pane and runs the command as its process; when the
-    /// program exits, `closeOverlay` tears it down. No-op (returns false) when the session is unknown
-    /// or already has an overlay open. NOT persisted — the overlay never survives a relaunch.
-    ///
-    /// `sizePercent` (clamped to 1...100) requests a *floating* overlay: an opaque, framed panel sized
-    /// to that percent of the pane, with the session still visible behind it. nil gives the default
-    /// full-pane overlay that hides the session.
-    @discardableResult public func openOverlay(_ sessionID: UUID, command: String, cwd: String? = nil,
-                                               wait: Bool = false, sizePercent: Int? = nil) -> Bool {
-        guard let session = session(withID: sessionID), !session.overlayActive else { return false }
-        session.overlayCommand = command
-        session.overlayCwd = cwd
-        session.overlayWait = wait
-        session.overlayExitCode = nil
-        session.overlaySizePercent = sizePercent.map { min(100, max(1, $0)) }
-        session.overlayActive = true
-        return true
-    }
-
-    /// Records the overlay program's exit status (parsed app-side from the wrapper's temp file on the
-    /// surface's teardown) so `session.overlay.result` can report it after the overlay closes. No-op
-    /// for an unknown session.
-    public func recordOverlayExit(_ sessionID: UUID, code: Int) {
-        session(withID: sessionID)?.overlayExitCode = code
-    }
-
-    /// Closes the overlay terminal: hides it AND tears down its surface (unlike the split, the overlay
-    /// is never kept alive — it is ephemeral). Used both on explicit close and when the overlay's
-    /// program exits on its own. No-op (returns false) when there is no overlay.
-    @discardableResult public func closeOverlay(_ sessionID: UUID) -> Bool {
-        guard let session = session(withID: sessionID), session.overlayActive else { return false }
-        session.overlayActive = false
-        session.overlaySurface?.teardown()
-        session.overlaySurface = nil
-        session.overlayCommand = nil
-        session.overlayCwd = nil
-        session.overlayWait = false
-        session.overlaySizePercent = nil
-        return true
-    }
-
-    /// Toggles the scratch terminal for a session — a third, full-overlay login shell. The scratch
-    /// surface is created lazily by the detail pane on first show and, like the split, kept alive when
-    /// hidden (this only flips `scratchActive`), so a re-show reuses the same shell. Not persisted, so
-    /// no `save()`. No-op for an unknown session.
-    public func toggleScratch(_ sessionID: UUID) {
-        guard let session = session(withID: sessionID) else { return }
-        session.scratchActive.toggle()
-    }
-
-    /// Closes the scratch terminal: hides it AND tears down its surface (so a subsequent show starts a
-    /// fresh shell). Used on the scratch shell's own `exit` and on session/workspace/window teardown.
-    /// No-op (returns false) when there is no scratch surface.
-    @discardableResult public func closeScratch(_ sessionID: UUID) -> Bool {
-        guard let session = session(withID: sessionID), let scratch = session.scratchSurface else { return false }
-        session.scratchActive = false
-        // if the open search bar is pinned to the scratch being torn down, reset search rather than leave a
-        // stuck, no-op bar (the weak `searchSurface` zeroes but `searchActive` stays true) — mirrors the
-        // closeSplit/closePrimaryPane handling. Guarded on identity so a search owned by the main/split pane
-        // (the scratch can cover a session whose pane opened search) survives the scratch teardown.
-        if session.searchSurface === scratch { session.clearSearch() }
-        scratch.teardown()
-        session.scratchSurface = nil
-        return true
-    }
-
     /// Moves a session to another workspace (or reorders within the same one),
     /// keeping the **same** `Session` instance so its attached surface and live
     /// shell survive. `index` is the destination position in the target's session
@@ -589,6 +459,21 @@ public final class AppStore {
         if changed { save() }
     }
 
+    /// Sets this window's sidebar visibility and persists it. Clean no-op (no write) when unchanged, so
+    /// menu, toolbar, palette, and control callers can delta-compute their desired state without
+    /// duplicating the persistence gate. `sidebarVisible` is per-window state saved in this store's
+    /// snapshot.
+    public func setSidebarVisible(_ visible: Bool) {
+        guard sidebarVisible != visible else { return }
+        sidebarVisible = visible
+        save()
+    }
+
+    /// Flips this window's sidebar visibility and persists the new state.
+    public func toggleSidebarVisible() {
+        setSidebarVisible(!sidebarVisible)
+    }
+
     /// Sets the sidebar mode and persists it. Clean no-op (no write) when the mode is unchanged, so the
     /// delta-computed control/menu callers stay idempotent.
     public func setSidebarMode(_ mode: SidebarMode) {
@@ -723,7 +608,7 @@ public final class AppStore {
         }
         return Snapshot(selectedSessionID: selectedSessionID, workspaces: workspaceSnapshots,
                         sidebarWidth: sidebarWidth, sidebarVisible: sidebarVisible, sidebarMode: sidebarMode,
-                        focusedWorkspaceID: focusedWorkspaceID)
+                        focusedWorkspaceID: focusedWorkspaceID, sessionRecency: sessionRecency.items)
     }
 
     /// Rebuilds the tree from a snapshot: fresh `Session`s (surfaces and shells
@@ -768,7 +653,11 @@ public final class AppStore {
         } else {
             selectedSessionID = snapshot.selectedSessionID
         }
-        sessionRecency = RecencyStack<UUID>()
+        // re-seed the Ctrl-Tab order from the persisted list (dropping ids not in the restored
+        // tree) so the switcher works right after relaunch; the restored selection floats to the
+        // front, keeping the "previous session" slot truthful.
+        let restoredIDs = Set(workspaces.flatMap(\.sessions).map(\.id))
+        sessionRecency = RecencyStack(items: (snapshot.sessionRecency ?? []).filter { restoredIDs.contains($0) })
         recordRecency()
     }
 

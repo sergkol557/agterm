@@ -26,10 +26,14 @@ public struct Snapshot: Codable, Equatable, Sendable {
     /// snapshot already on disk before this field was added decodes (as nil → unfocused) instead of
     /// failing the load and wiping the saved tree.
     public var focusedWorkspaceID: UUID?
+    /// Most-recently-selected session ids, front = current, so the Ctrl-Tab switcher's order survives
+    /// a relaunch. Restore drops ids no longer in the tree. Optional so a snapshot already on disk
+    /// before this field was added still decodes (as nil → selection only), like the fields above.
+    public var sessionRecency: [UUID]?
 
     public init(version: Int = Snapshot.currentVersion, selectedSessionID: UUID? = nil,
                 workspaces: [WorkspaceSnapshot] = [], sidebarWidth: Double? = nil, sidebarVisible: Bool? = nil,
-                sidebarMode: SidebarMode? = nil, focusedWorkspaceID: UUID? = nil) {
+                sidebarMode: SidebarMode? = nil, focusedWorkspaceID: UUID? = nil, sessionRecency: [UUID]? = nil) {
         self.version = version
         self.selectedSessionID = selectedSessionID
         self.workspaces = workspaces
@@ -37,6 +41,30 @@ public struct Snapshot: Codable, Equatable, Sendable {
         self.sidebarVisible = sidebarVisible
         self.sidebarMode = sidebarMode
         self.focusedWorkspaceID = focusedWorkspaceID
+        self.sessionRecency = sessionRecency
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case version, selectedSessionID, workspaces, sidebarWidth, sidebarVisible, sidebarMode
+        case focusedWorkspaceID, sessionRecency
+    }
+
+    /// Custom decode so `sessionRecency` is LOSSY: a present-but-invalid list (a malformed UUID
+    /// string or a wrong JSON type after a hand edit) drops to nil instead of throwing. Without
+    /// this, `Optional` tolerates only a MISSING key, so one bad MRU entry would fail the entire
+    /// `Snapshot` and `PersistenceStore.load` would start fresh — wiping every workspace and
+    /// session over a non-essential field. Mirrors `SessionSnapshot`'s `backgroundWatermark`
+    /// handling below; every other field keeps its strict/`decodeIfPresent` behavior.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = try c.decode(Int.self, forKey: .version)
+        selectedSessionID = try c.decodeIfPresent(UUID.self, forKey: .selectedSessionID)
+        workspaces = try c.decode([WorkspaceSnapshot].self, forKey: .workspaces)
+        sidebarWidth = try c.decodeIfPresent(Double.self, forKey: .sidebarWidth)
+        sidebarVisible = try c.decodeIfPresent(Bool.self, forKey: .sidebarVisible)
+        sidebarMode = try c.decodeIfPresent(SidebarMode.self, forKey: .sidebarMode)
+        focusedWorkspaceID = try c.decodeIfPresent(UUID.self, forKey: .focusedWorkspaceID)
+        sessionRecency = (try? c.decodeIfPresent([UUID].self, forKey: .sessionRecency)) ?? nil
     }
 }
 

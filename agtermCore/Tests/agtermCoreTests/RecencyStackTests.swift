@@ -23,6 +23,18 @@ struct RecencyStackTests {
         #expect(stack.items == [3, 1])
     }
 
+    @Test func initDropsDuplicateSeedIds() {
+        // a persisted/hand-edited seed may carry duplicates; the first occurrence wins.
+        let stack = RecencyStack<Int>(items: [1, 2, 1, 3, 2])
+        #expect(stack.items == [1, 2, 3])
+    }
+
+    @Test func initDedupsBeforeTruncatingToLimit() {
+        // dedup must run before the limit cut: prefix-then-dedup would yield [1] here.
+        let stack = RecencyStack<Int>(limit: 2, items: [1, 1, 2, 3])
+        #expect(stack.items == [1, 2])
+    }
+
     @Test func limitBoundsTheList() {
         var stack = RecencyStack<Int>(limit: 2)
         stack.push(1); stack.push(2); stack.push(3)

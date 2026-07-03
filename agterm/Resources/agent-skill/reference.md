@@ -173,10 +173,12 @@ position?, repeats?}` object; `kind` is `image`/`text`/`color` — omitted when 
   background-opacity); a `color` instead honors the Settings window translucency. Read the current
   background back from a session's `background` field in `tree --json` (a `{kind, colorHex, …}` object,
   omitted when none).
-- `session overlay open <command> [--cwd DIR] [--wait] [--block] [--size-percent N] [--target] [--window W]`
+- `session overlay open <command> [--cwd DIR] [--wait] [--block] [--size-percent N] [--background-color #rrggbb] [--target] [--window W]`
   — run `command` in an ephemeral terminal on top of the session; it closes when the command exits.
   Full-size by default (hides the session); `--size-percent N` (1–100) makes it a floating framed panel
-  with the session visible behind. `--wait` keeps the overlay open after the command exits (press a key
+  with the session visible behind. `--background-color #rrggbb` gives the overlay pane its own solid
+  background color, independent of the session's own `session background color` (nil = the default theme
+  background); it honors the Settings window translucency, captured when the overlay opens. `--wait` keeps the overlay open after the command exits (press a key
   to close). `--block` waits for the command to exit and makes agtermctl exit with the command's status
   (cannot combine with `--wait`); the program renders normally — capture its OUTPUT via the program's
   own output file, not the control channel. Returns the overlay's session id. `--target` defaults to
@@ -259,6 +261,13 @@ attributed to a session (default: the active session of the frontmost window). `
 the session name. Clicking the banner reveals that session. This is the only app-level way to post a
 banner (the terminal's own OSC 9/777 is the other source). Control-native (no GUI/menu equivalent).
 
+For agentic attention (waiting on input, or a finished result), prefer `session status` over `notify`
+and OSC 9/777. The two overlap, either can raise an "I need you" signal, but a notification is a
+one-shot banner and badge with no lasting state, while `session status` is a typed, persistent state
+(`active`/`blocked`/`completed`) that stays on the row until acted on, is more precise, and drives the
+attention list, the title-bar bell, and attention navigation (`session go --to next-attention`). Keep
+`notify` for a one-off nudge that needs no follow-up.
+
 ## font
 
 `agtermctl font inc|dec|reset [--target] [--window W]` — increase / decrease / reset the font size on
@@ -286,8 +295,11 @@ expressible as a parsed chord. Some chords are reserved (the Ctrl-Tab switcher, 
 and cannot be bound.
 
 Custom-command tokens (expanded into the `/bin/sh -c` line, raw — prefer the quoted `$AGT_*` env form
-for untrusted content):
+for untrusted content). A remote host can set the session title (OSC) and working directory (OSC 7),
+so `{AGT_SESSION_NAME}` and `{AGT_SESSION_PWD}` are as untrusted as `{AGT_SELECTION}`; use the quoted
+`$AGT_*` form for any of them:
 
+- `{AGT_SESSION_NAME}` / `$AGT_SESSION_NAME` — the session's display name (the focused pane's terminal title, remote-settable via OSC).
 - `{AGT_SESSION_PWD}` / `$AGT_SESSION_PWD` — the focused pane's working directory.
 - `{AGT_SELECTION}` / `$AGT_SELECTION` — the current selection.
 - Plus the other `$AGT_*` context vars the runner exports.

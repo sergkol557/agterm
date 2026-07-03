@@ -80,21 +80,22 @@ surface ownership, and the C-boundary concurrency contract before changing the b
   for terminal/process bytes), exempts the deliberately-named `agtermApp`/`Go` types,
   tunes `line_length` (200) and `cyclomatic_complexity` (`ignores_case_statements`,
   so the flat 44-arm command dispatch isn't "complex"), allows 2-deep type nesting,
-  and grandfathers the size limits on the big-by-design files (the control dispatch,
-  the eager-deck views, the large test suites) just above today's maxima — so only NEW growth warns.
+  and caps source files at 1000 lines / 800-line type bodies.
+  Test files get a 2000-line budget via two nested `.swiftlint.yml` configs
+  (`agtermUITests/` and `agtermCore/Tests/`) that override only `file_length`/`type_body_length` and inherit everything else from the root.
   `--strict` promotes warnings to failures, so the tree must stay swiftlint-clean (zero findings).
 
 The app must build, `swift test` must stay green, and `make lint` must pass after every change.
 
-- **Manage file sizes for real — target under 1000 lines for source files (tests may run 2–3×).**
+- **Manage file sizes for real — source files stay under 1000 lines, tests under a hard 2000 (= 2×).**
   In OUR OWN work: when you touch a long file, PROPOSE splitting/relocating it toward that rather than
   growing it further — but ALWAYS ask the user first, never restructure a file unprompted; and don't
-  reflexively bump the grandfathered swiftlint `file_length`/`type_body_length` limits to fit new code.
+  reflexively bump the swiftlint `file_length`/`type_body_length` limits to fit new code.
   For a CONTRIBUTOR's PR: do NOT force this — a contributor shouldn't have to refactor a pre-existing long
   file to land their change; NOTIFY that a file is getting long and SUGGEST keeping it under 1000, but
   never make them address the line count or block the PR on it.
   And when REVIEWING a contributor's PR, never suggest the contributor RAISE a `file_length`/`type_body_length`
-  (or any lint) limit to fit their change — bumping a grandfathered limit is a maintainer decision,
+  (or any lint) limit to fit their change — bumping a size limit is a maintainer decision,
   so at most note the file is getting long, never offer the limit bump as the fix.
 
 - **Working in a git WORKTREE: SYMLINK the prebuilt artifacts, don't re-run setup.** A fresh `git worktree`
@@ -168,6 +169,10 @@ The app must build, `swift test` must stay green, and `make lint` must pass afte
   so the `AGTERM_STATE_DIR`/`AGTERM_CONTROL_SOCKET` env overrides are STILL required for a manual dev
   launch even with the distinct id — otherwise the dev instance reads/writes the user's real `workspaces.json`
   AND steals the deployed app's socket (its `start()` unlinks-then-binds the default path).
+  **The socket override must be a SHORT path** (unix sockets cap the path at ~104 bytes):
+  a long temp dir (e.g. a Claude session scratchpad) fails with `socket path too long` and the control
+  server never binds, while the app itself launches fine — so keep the state dir wherever,
+  but point the socket at something like `/tmp/<name>.sock`.
 - **Anchor path/existence checks at an ABSOLUTE repo-root path — the Bash cwd DRIFTS.** The shell working
   directory persists across tool calls and silently drifts (e.g. a `cd agtermCore` for `swift test` leaves
   you there), so a later relative `find .github`/`ls`/`cd` runs from the WRONG place and returns a FALSE
@@ -187,10 +192,25 @@ The app must build, `swift test` must stay green, and `make lint` must pass afte
   **CI does NOT run the XCUITests** — it builds the app but never test-runs the app target;
   only the host-free `swift test` runs in CI.
   The `lint` job is `--strict`, so any swiftlint warning fails the build (see the `make lint` note above).
-  `release.yml` fires on `v*` tags: `scripts/release.sh <version> --publish` on `macos-26` builds an
-  unsigned DMG (`AGTERM_ALLOW_UNSIGNED=1`), publishes the GitHub release,
-  and bumps the Homebrew cask in `umputun/homebrew-apps` (needs the `HOMEBREW_TAP_PAT` secret,
-  not the default token).
+  There is NO `release.yml` — releases are cut LOCALLY, not by CI.
+  `scripts/release.sh <version> --publish` runs on the maintainer's Mac, the only place the
+  `Developer ID Application: Brave Elk LLC` cert and the `agterm-notary` keychain profile live.
+  It builds Release, then signs + notarizes + staples the app AND the DMG (the DMG container is
+  codesigned before notarizing — `hdiutil`'s image is otherwise unsigned and fails the `spctl`
+  primary-signature check), creates the tag + GitHub release, uploads the DMG, and pushes the Homebrew
+  cask to `umputun/homebrew-apps` with the maintainer's own `gh` auth (no `HOMEBREW_TAP_PAT` needed).
+  A no-`--publish` run is a full dry-run (build → sign → notarize → staple → `spctl`) that stops before
+  uploading.
+  **`CHANGELOG.md` is RELEASE-ONLY — never touch it in a feature PR.**
+  It is written only at release time (the `docs: update changelog for vX.Y.Z` commit / the release flow).
+  A feature's own doc updates go to `README.md`, the bundled `agterm/Resources/agent-skill/`,
+  and the relevant `.claude/rules/*.md` note — not the changelog.
+  **At release time, run the new `CHANGELOG.md` version section through the `draft-approval` skill BEFORE
+  writing/committing it** — write the section to a temp file, open it in `draft-review.sh` (revdiff),
+  address annotations, then get an explicit in-chat go-ahead.
+  Do NOT just paste the section inline and ask — `scripts/release.sh` publishes that exact section as the
+  GitHub release body (release.sh:70-85), so it is outward-facing text and gets the full draft-approval/revdiff
+  flow, same as a `gh`/`glab` comment.
 
 ## GhosttyKit.xcframework
 

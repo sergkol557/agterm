@@ -44,15 +44,46 @@ public struct KeymapDiagnostic: Equatable, Sendable {
     }
 }
 
+/// Host-free loader for the user keymap file. Missing files recover as an empty keymap with no
+/// diagnostics; existing unreadable or invalid-UTF8 files recover with a single line-0 diagnostic.
+public struct KeymapStore: Sendable {
+    public let configDirectory: URL
+
+    public init(configDirectory: URL) {
+        self.configDirectory = configDirectory
+    }
+
+    public var path: URL {
+        ConfigPaths.keymapPath(configDirectory: configDirectory)
+    }
+
+    public func load() -> (keymap: Keymap, diagnostics: [KeymapDiagnostic]) {
+        do {
+            let text = try String(contentsOf: path, encoding: .utf8)
+            return parseKeymap(text)
+        } catch {
+            let empty = Keymap(builtinOverrides: [:], commands: [])
+            guard FileManager.default.fileExists(atPath: path.path) else {
+                return (empty, [])
+            }
+            let diagnostic = KeymapDiagnostic(
+                line: 0,
+                message: "could not read keymap.conf: \(error.localizedDescription)")
+            return (empty, [diagnostic])
+        }
+    }
+}
+
 /// Parse the text of a `keymap.conf` into a `Keymap` plus a list of diagnostics. Never throws: a bad
 /// line becomes a diagnostic and is skipped, so a single malformed line never discards the rest of
 /// the file.
 ///
 /// Grammar (kitty-flavored): the file is line-based. Blank lines and lines whose first non-space
 /// character is `#` are ignored. A trailing inline comment is stripped when a `#` is preceded by
-/// whitespace AND lies outside any double-quoted span (so a `#` inside a `command "name"` or inside
-/// the shell line is kept) — this keeps `command "x" echo a#b` and `map cmd+a#` handling simple while
-/// allowing `map cmd+d toggle_split  # rebind`.
+/// whitespace AND lies outside any quoted span, single OR double (so a `#` inside a `command "name"`,
+/// inside a double-quoted shell arg, or inside a single-quoted one like `git commit -m 'fix #42'` is
+/// kept) — this keeps `command "x" echo a#b` and `map cmd+a#` handling simple while allowing
+/// `map cmd+d toggle_split  # rebind`.
 ///
 /// The first whitespace-token is the verb:
 /// - `map <chord> <action>`: `<chord>` is parsed via `parseKeybind` (a leader sequence, count > 1, is
@@ -276,21 +307,30 @@ private func validateCommands(_ commands: [CustomCommand], against keymap: Keyma
 }
 
 /// Strip a trailing inline comment: a `#` is a comment when it is preceded by whitespace AND sits
-/// outside a double-quoted span. A leading `#` (the whole-line comment) is handled by the caller, but
-/// it also falls out here since position 0 has no preceding whitespace only when the line starts with
-/// `#` after trimming — the caller trims and re-checks emptiness, so a `# ...` line becomes empty.
+/// outside a quoted span (single OR double). A leading `#` (the whole-line comment) is handled by the
+/// caller, but it also falls out here since position 0 has no preceding whitespace only when the line
+/// starts with `#` after trimming — the caller trims and re-checks emptiness, so a `# ...` line becomes
+/// empty. Single quotes matter because a shell line like `git commit -m 'fix #42'` must keep its `#`;
+/// the two quote states are mutually exclusive (a `"` inside `'...'` is literal, and vice versa).
 private func stripComment(_ line: String) -> String {
-    var inQuotes = false
+    var inSingleQuotes = false
+    var inDoubleQuotes = false
     var previousWasSpace = true // start-of-line counts as preceded-by-whitespace, so a leading `#` cuts
     var result = ""
     for ch in line {
-        if ch == "\"" {
-            inQuotes.toggle()
+        if ch == "\"" && !inSingleQuotes {
+            inDoubleQuotes.toggle()
             result.append(ch)
             previousWasSpace = false
             continue
         }
-        if ch == "#" && !inQuotes && previousWasSpace {
+        if ch == "'" && !inDoubleQuotes {
+            inSingleQuotes.toggle()
+            result.append(ch)
+            previousWasSpace = false
+            continue
+        }
+        if ch == "#" && !inSingleQuotes && !inDoubleQuotes && previousWasSpace {
             break
         }
         result.append(ch)

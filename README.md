@@ -57,7 +57,7 @@ A file open in the quick terminal, the window's shared scratch overlay:
 
 Pre-built releases are for **macOS 14 or later**, supporting both **Apple Silicon (arm64)** and **Intel (x86_64)** architectures (universal build).
 
-These interim builds are ad-hoc signed but **not yet Apple-notarized** (Developer ID enrollment is in progress), so macOS Gatekeeper blocks them until the quarantine flag is removed. This is temporary — once notarized builds ship, they install with no extra step.
+Releases are signed with a Developer ID certificate and notarized by Apple, so macOS Gatekeeper opens them with no extra steps.
 
 Homebrew:
 
@@ -65,17 +65,19 @@ Homebrew:
 brew install --cask umputun/apps/agterm
 ```
 
-The cask strips the quarantine flag on install, so the app opens with no prompt. It also installs the `agtermctl` command-line tool, so cask users should not run the in-app installer as well.
+The cask also installs the `agtermctl` command-line tool, so cask users should not run the in-app installer as well.
 
 Direct download:
 
-Download the latest `.dmg` from the [releases page](https://github.com/umputun/agterm/releases), open it, and drag `agterm.app` into `/Applications`. Because the build isn't notarized yet, run this once so Gatekeeper lets it launch:
+Download the latest `.dmg` from the [releases page](https://github.com/umputun/agterm/releases), open it, and drag `agterm.app` into `/Applications`.
 
-```sh
-xattr -cr /Applications/agterm.app
-```
+### Optional Help-menu installers
 
-(Or try to open it, then click **Open Anyway** in **System Settings → Privacy & Security**. Right-click → Open no longer bypasses Gatekeeper on current macOS.) To put the `agtermctl` CLI on your `PATH`, use **Help ▸ Install Command Line Tool…** from the app.
+The app's **Help** menu has three one-time installers. None are needed to use agterm as a terminal; each connects it to a wider workflow, and you can run any of them later.
+
+- **Install Command Line Tool…** puts the bundled `agtermctl` on your `PATH` (a symlink in `/usr/local/bin`) so you can script the app from a shell. The Homebrew cask already installs it, so cask users can skip this one. See [Scripting agterm](#scripting-agterm).
+- **Install Agent Status Hooks…** lets a coding agent (Claude Code, Codex, or others) report its state onto its session's sidebar row, so you can tell at a glance which of several running agents is active, blocked, or finished. See [Agent status](#agent-status).
+- **Install Agent Skill…** teaches Claude Code or Codex how to drive agterm through `agtermctl`, so an agent running inside a session can build its own layout, run overlays, and manage windows without you explaining the API. It drives the app through the command-line tool, so install that one too.
 
 ## Build from source
 
@@ -129,7 +131,7 @@ agterm arranges terminals into a small hierarchy. These are the only terms you n
 
 **Flagging and focus.** Two ways to cut down a busy sidebar. Flag a few sessions from different workspaces to get a flat working-set view of just those; a flag is durable and survives a move. Focus a single workspace to hide the others, with a one-click way back. The two are independent.
 
-**Notifications.** A program in any session can raise a desktop notification (via OSC 9 / 777, or the control API). It shows as a banner and a count badge on the session's row; clicking the banner jumps to the exact pane that raised it.
+**Notifications.** A program in any session can raise a desktop notification (via OSC 9 / 777, or the control API). It shows as a banner and a count badge on the session's row; clicking the banner jumps to the exact pane that raised it. For a coding agent that just needs to say it is waiting on you, [Agent status](#agent-status) is usually the better fit.
 
 **Agent status.** A coding agent in a session can report its state (active, blocked, completed) onto that session's row, so a screen of concurrent agents shows which one needs you. See [Agent status](#agent-status) for wiring it up.
 
@@ -141,11 +143,11 @@ agterm is built to run from the keyboard. Every action has a shortcut and appear
 - the **action palette** (Ctrl-Shift-P) runs any command by name (new, rename, close, split, toggle scratch, move a session, change font size, and so on);
 - the **custom-commands palette** (Ctrl-Shift-O) lists the shell commands you define in `keymap.conf`.
 
-For jumping back to sessions you have been working in, a Ctrl-Tab switcher walks a most-recently-used list across every workspace, macOS app-switcher style: hold Ctrl and tap Tab to move through it, release to switch, and a single tap flips straight back to the session you were just in. Shortcuts also step between adjacent sessions, panes, and windows.
+For jumping back to sessions you have been working in, a Ctrl-Tab switcher walks a most-recently-used list across every workspace, macOS app-switcher style: hold Ctrl and tap Tab to move through it, release to switch, and a single tap flips straight back to the session you were just in. The list survives a relaunch, so the switcher works right after your sessions restore. Shortcuts also step between adjacent sessions, panes, and windows.
 
 ## Settings
 
-Settings (Cmd+,) has three tabs. **General** covers notification banners and badges, scroll speed, how much the inactive split pane dims, where a new session opens, and an opt-in toggle to re-run each pane's foreground command on restart. **Appearance** sets the terminal font and theme (512 bundled themes), the window background opacity and blur, and the sidebar tint. **Key Mapping** points at the directory holding `keymap.conf`, lists any parse errors, and reloads it. Changes apply live to the open terminals.
+Settings (Cmd+,) has five tabs. **General** covers mouse scroll speed and right-click-to-paste, where a new session opens, an opt-in toggle to re-run each pane's foreground command on restart, an opt-in confirmation before closing a session, and whether to load your global Ghostty config. **Appearance** sets the terminal font and theme (512 bundled themes), the window background opacity and blur, the sidebar tint, and how much the inactive split pane dims. **Notifications** toggles the banner, the unseen-count badge, and the title-bar attention indicator. **Agent Status** sets the status-glyph colors and the blocked-session sound. **Key Mapping** points at the directory holding `keymap.conf`, lists any parse errors, and reloads it. Changes apply live to the open terminals.
 
 The theme picker (View ▸ Select Theme…, or the action palette) previews each bundled theme on the open terminals as you move through the list, so you see it before committing. Enter commits and syncs it to Settings; Esc reverts to the one you started on.
 
@@ -211,6 +213,7 @@ With no selection it exits non-zero with `no selection`. The selection must be m
 agtermctl session overlay open "revdiff HEAD~3" --target 9f3c  # review the last 3 commits over session 9f3c
 agtermctl session overlay open "htop"                          # on the active session
 agtermctl session overlay open "htop" --size-percent 70        # a floating, framed panel at 70% of the pane
+agtermctl session overlay open "revdiff HEAD~3" --size-percent 80 --background-color "#2a1a3a"  # tint the overlay pane
 agtermctl session overlay open "make test" --wait              # keep the overlay open after exit (press a key to close)
 agtermctl session overlay open "make test" --block             # block until it exits; exit with its status
 agtermctl session overlay close --target 9f3c                  # close it from a script
@@ -340,6 +343,8 @@ macos-option-as-alt = true
 
 Put that in `ghostty.conf`. It also works in your global `~/.config/ghostty/config` once you enable the toggle above. The full key reference is at <https://ghostty.org/docs/config>.
 
+Programs running in the terminal can read and write the macOS clipboard over OSC 52. agterm prompts before a program **reads** your clipboard, because a read hands its contents (which may include passwords or tokens) back to the program; a normal ⌘V paste is never prompted. Clipboard **writes** go through by default, matching other terminals so a remote `tmux`/`vim` yank still reaches your clipboard. To gate writes too, set `clipboard-write = ask` (prompt) or `clipboard-write = deny` (block) in `ghostty.conf`. Each prompt offers *Don't ask again this session*, which remembers your choice until agterm quits.
+
 Open the file with **File ▸ Edit ghostty.conf…** or the ⌃⇧P palette ("Edit ghostty.conf"): it opens in a 95% overlay running `$VISUAL`/`$EDITOR` (falling back to `vi`), the same as Edit Keymap, and reloads when you save and quit. Apply edits made elsewhere with **File ▸ Reload Config**, the action palette ("Reload Config"), or `agtermctl config reload`. A malformed line does not break the load: the bad lines are skipped and the good ones still apply. The diagnostic count (shown in a banner and returned by `config.reload`) covers every ghostty config source, not just `ghostty.conf`, because the diagnostics do not record which file they came from. The Console log shows the offending line.
 
 ## Agent status
@@ -347,6 +352,8 @@ Open the file with **File ▸ Edit ghostty.conf…** or the ⌃⇧P palette ("Ed
 A coding agent running in a session can flag its status on that session's sidebar row, so you can tell at a glance which of many concurrent agents needs you. The status shows as a small tinted SF Symbol just left of the notification badge: `active` is a blue ellipsis, `blocked` an amber exclamation, `completed` a green check, and `idle` is nothing. The glyph shows on every non-idle session, the selected one included. A one-time `completed` flash auto-clears once you visit the session.
 
 When the sidebar is hidden the per-session glyphs go with it, so the same signal is available two more ways. An optional **title-bar bell** (turn on **Show attention indicator** in Settings ▸ General ▸ Notifications; off by default) reflects the window at a glance: dimmed when nothing needs attention, plain when a session is active or completed, and a filled amber bell when any session is blocked. Clicking it — or pressing ⌃⇧I, choosing **Navigate ▸ Go to Attention…**, or the action palette's "Show Attention" — opens the **attention list**: a palette of just this window's non-idle sessions, each with its status glyph, sorted blocked → active → completed (newest change first). Enter jumps to the session. Over the control channel, `agtermctl tree --json` now reports each session's `status` (omitted when idle).
+
+For a coding agent this overlaps with a desktop notification: both are ways for a session to get your attention, and in agentic use either can carry the same "I need you" signal, so the two are largely interchangeable. The difference is what stays behind. A notification (OSC 9/777 or `agtermctl notify`) is a one-shot banner and badge with no lasting state. Agent status is a typed, persistent state that stays on the row until you act on it, tells working (`active`) apart from waiting (`blocked`) and finished (`completed`), and powers the attention list, the title-bar bell, and attention navigation (⌃⌥↑/↓). So for an agent flagging that it needs you, prefer agent status: it is more accurate and plugs into the attention UI, while a notification is best kept for a one-off nudge that needs no follow-up.
 
 An agent sets it over the control channel:
 

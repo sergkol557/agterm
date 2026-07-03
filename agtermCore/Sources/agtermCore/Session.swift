@@ -148,6 +148,12 @@ public final class Session: Identifiable {
     /// creation. `@ObservationIgnored`.
     @ObservationIgnored public var overlayCwd: String?
 
+    /// The overlay's own solid background color as `#rrggbb`, or nil for the default theme background.
+    /// Independent of the session's `backgroundWatermark` — the overlay surface is not wired to the
+    /// session, so it carries its own color, set via `session.overlay.open --background-color`. Read by
+    /// the factory at creation; set at open, cleared on close. `@ObservationIgnored`, never persisted.
+    @ObservationIgnored public var overlayBackgroundColor: String?
+
     /// Whether the overlay keeps its surface open after the command exits, showing libghostty's
     /// "press any key to close" prompt (useful to read a command's final output) instead of closing
     /// immediately. Read by the factory at creation. `@ObservationIgnored`.
@@ -165,6 +171,13 @@ public final class Session: Identifiable {
     /// hides the session and draws translucent). Observed, so the detail pane picks the right layout.
     /// Set at open, cleared on close; never persisted.
     public var overlaySizePercent: Int?
+
+    /// Whether a FULL-coverage overlay is up: `overlayActive` with no size percent. A full overlay hides
+    /// the session content beneath it — the pane(s) AND a shown scratch — so its translucent background
+    /// reveals the window backing, never a covered surface (under window translucency every surface
+    /// renders a fully transparent background, so anything left visible below would bleed through).
+    /// A floating (sized) overlay is not a cover: it draws an opaque panel over still-visible content.
+    public var fullOverlayActive: Bool { overlayActive && overlaySizePercent == nil }
 
     /// Whether the scratch terminal is shown on top of this session (full single-pane size, hiding
     /// the single/split content underneath, like a full overlay). The scratch is a third per-session

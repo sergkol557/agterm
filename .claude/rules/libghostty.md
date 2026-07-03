@@ -1,10 +1,12 @@
 ---
 paths:
-  - "agterm/Ghostty/GhosttySurfaceView.swift"
+  - "agterm/Ghostty/GhosttySurfaceView*.swift"
   - "agterm/Ghostty/GhosttyApp.swift"
   - "agterm/Ghostty/GhosttyCallbacks.swift"
   - "agterm/Ghostty/GhosttyResources.swift"
   - "agterm/ContentView.swift"
+  - "agterm/Views/WindowContentView.swift"
+  - "agterm/Views/SplitRatioAccessor.swift"
   - "agterm/Views/TerminalView.swift"
   - "agterm/Views/TerminalSearchBar.swift"
 ---
@@ -55,7 +57,7 @@ paths:
   If this layout breaks, `TERM=xterm-ghostty` fails and keys break.
 - **Surface lifecycle (EAGER deck).**
   `Session` owns its `GhosttySurfaceView` (`@ObservationIgnored`).
-  The detail pane is a *deck* — `ContentView.detailPane` is a `ZStack` over EVERY session (`store.workspaces.flatMap(\.sessions)`),
+  The detail pane is a *deck* — `WindowContentView.detailPane` is a `ZStack` over EVERY session (`store.workspaces.flatMap(\.sessions)`),
   each session's `TerminalView` mounted at once, with only the selected one at `opacity 1` + hit-testable.
   So every session's shell spawns at startup (eager realization, not lazy-on-first-select),
   and switching is a visibility + `isActive` flip, never an `.id` swap — re-hosting a surface invalidates
@@ -82,6 +84,22 @@ paths:
   when visible and `unregisterDraggedTypes` otherwise, so only the on-screen pane is ever a drop target.
   Not `hitTest` (AppKit drag ignores it) and not a `draggingEntered` reject (AppKit does not fall through
   to the sibling behind a rejecting target — the drop is simply lost).
+- **A drop inserts as a bracketed paste, never typed keystrokes.**
+  `performDragOperation` routes the dropped text through `GhosttySurfaceView.insertPasted(text:)` (`ghostty_surface_text`),
+  whose bracketed-paste wrapping makes the running program treat the payload as literal text, so a multi-line
+  drop lands at the cursor without auto-submitting — the same behavior as ⌘V paste.
+  The no-submit guarantee tracks the program's bracketed-paste mode: a program with mode 2004 OFF (a raw
+  prompt, some TUIs) still submits a trailing newline, exactly the caveat ⌘V has — closing that residual is
+  the separate unsafe-paste-confirmation work, not this change.
+  This is deliberately NOT `inject(text:)`, which turns each `\n`/`\r` into a Return: a drop is a paste,
+  while `session.type` is automation that WANTS newline→Return.
+  Drop USED to reuse `inject(text:)`; this change splits it off so drop uses the bracketed-paste call and
+  `session.type` keeps `inject` — do not re-unify them (the control-api note "do not simplify inject back to
+  `ghostty_surface_text`" is about `session.type` only).
+  (`pasteboardText`, the pasteboard reader, is shared by the drop path and the ⌘V clipboard-paste path
+  `readPasteboardText`, NOT by `session.type`, which takes its text from the control request.)
+  `ShellEscape.path` still escapes file-URL paths so a path with spaces lands as one shell token on Enter;
+  the newline-escaping from #96 is now belt-and-suspenders under bracketed paste.
 - **Search bar placement (NSSplitView-overrun rule).**
   `TerminalSearchBar` (`agterm/Views/`) is anchored on `detailPane` via `.overlay(alignment: .topTrailing) { searchBarLayer }`
   — the SAME level as `floatingOverlayLayer`, NEVER inside any session's `sessionDetail` HSplitView-hosting
@@ -113,6 +131,18 @@ paths:
   outside `detailPane`/`sessionDetail`/`HSplitView` (no split perturbation).
   Do NOT "fix" this with a permanent `.background(terminalColor)` on `customTitlebar` — it masks the
   symptom but breaks the opacity/blur chrome.
+- **Under window translucency every surface renders a fully transparent background — never leave a
+  surface visible beneath the FULL overlay.**
+  The translucency setting pins `background-opacity = 0` for every ghostty surface (the window's AppKit
+  backing supplies the tint), and the FULL overlay deliberately has no opaque SwiftUI backing.
+  Any surface left mounted at opacity 1 below it shows straight through — a "the overlay opened under
+  the scratch" report is SEE-THROUGH, not a z-order inversion (the layer compositing order was verified
+  correct in every open sequence: the overlay's layer sits above the scratch's).
+  `sessionDetail` therefore hides EVERY covered surface when `session.fullOverlayActive`:
+  the pane(s) via `hideForOverlay`, the scratch via its own `opacity(0)` + `allowsHitTesting(false)` +
+  a `deckVisible` gate (so a covered scratch is also not a file-drop target).
+  The FLOATING (sized) overlay and the quick terminal need none of this — both draw an opaque
+  `terminalColor`-backed panel, so nothing shows through them.
 - **Non-zero backing size.**
   Create the surface only when the view has a non-zero backing size, else the Metal layer renders blank.
   `pendingSurfaceCreation` defers creation until `setFrameSize` reports a real size.
@@ -175,4 +205,37 @@ paths:
   Cursor solid/hollow is not accessibility-observable, so it is NOT unit/UI-testable — verified by instrumenting
   `set_focus` and reading `log show` across split-open + multi-window key switches (exactly one focused
   surface app-wide in every case).
+- **OSC 52 clipboard access is gated in OUR callbacks, not by a ghostty-internal dialog.**
+  A program reading (`\e]52;c;?\a`) or writing (`\e]52;c;<base64>\a`) the system clipboard reaches agterm
+  through `read_clipboard_cb`/`confirm_read_clipboard_cb` and `write_clipboard_cb` (`GhosttyCallbacks`).
+  libghostty delegates the `ask` policy to the host: the write callback carries a `confirm` bool (true
+  when `clipboard-write = ask`), and the read confirm callback carries a `ghostty_clipboard_request_e`
+  (`GHOSTTY_CLIPBOARD_REQUEST_OSC_52_READ` for a program read, `..._PASTE` for ⌘V) — only `OSC_52_READ`
+  is gated, so pastes never prompt.
+  `ClipboardPromptController` (`@MainActor`) owns an app-session-scoped host-free `ClipboardPromptPolicy`
+  (`ask`/`allow`/`deny` remembered per direction until agterm quits, shared across every window and
+  terminal session: the "don't ask again this session" choice) and shows an `NSAlert` sheet.
+  Coalescing is keyed by (requesting surface, direction), so a program looping OSC 52 collapses to one
+  prompt while a DIFFERENT surface's concurrent request gets its OWN prompt, so one Allow never authorizes
+  another surface's read (or, under `clipboard-write = ask`, its write: the write callback's userdata is
+  the surface too, recovered the same way as the read confirm's).
+  Two rules the build proved the hard way: the callback fires INSIDE a libghostty tick, so the sheet is
+  deferred via `DispatchQueue.main.async` (a modal run loop opened inside the tick re-enters it); and a
+  DENIED read must complete with an EMPTY string and `confirmed = true`, because completing with
+  `confirmed = false` leaves the request unconfirmed and libghostty just re-asks, LOOPING the dialog.
+  The clipboard callbacks run on the main actor inside the tick (verified), so the UNGATED write
+  (`clipboard-write = allow`, the default) sets the pasteboard SYNCHRONOUSLY: deferring it would let a
+  same-tick OSC 52 read observe the stale clipboard.
+  Read gating rides ghostty's own `clipboard-read = ask` default (verified: the confirm callback fires
+  with no explicit config); write stays `allow` by default (matches mainstream terminals, so a legit
+  remote yank isn't interrupted) and opts into `ask`/`deny` via the agterm-scoped `ghostty.conf`.
+  The deferred read completion captures the `GhosttySurfaceView` (NOT the raw surface pointer) and
+  re-reads `view.surface` on the main actor before completing, skipping the call when it is nil: a
+  session/window/pane close (or `session.close` over the control socket) can `ghostty_surface_free` the
+  surface WHILE the sheet is open, and completing on the freed pointer is a use-after-free.
+  Freeing the surface already discards its pending clipboard request, so skipping is safe and loop-free.
+  The ghostty request `state` is `nonisolated(unsafe)` (same lifetime as the surface, guarded by that same
+  `view.surface` check).
+  The dialog is AppKit and not unit-tested (only `ClipboardPromptPolicy` is); the gating was verified with
+  an isolated dev instance driving OSC 52 read/write by hand.
 

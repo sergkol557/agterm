@@ -178,6 +178,30 @@ struct KeymapTests {
         #expect(keymap.commands[0].name == "name # not a comment")
     }
 
+    @Test func hashInsideSingleQuotedShellArgIsKept() {
+        // a `#` in a single-quoted arg (a commit message) must survive — it is not an inline comment.
+        let (keymap, diagnostics) = parseKeymap("command \"Commit\" cmd+shift+c git commit -m 'fix #42'")
+        #expect(diagnostics.isEmpty)
+        #expect(keymap.commands.count == 1)
+        #expect(keymap.commands[0].command == "git commit -m 'fix #42'")
+    }
+
+    @Test func trailingCommentAfterSingleQuotedArgIsStripped() {
+        // once the single quote closes, a whitespace-preceded `#` is still a real inline comment.
+        let (keymap, diagnostics) = parseKeymap("command \"X\" cmd+shift+x echo 'hi' # real comment")
+        #expect(diagnostics.isEmpty)
+        #expect(keymap.commands.count == 1)
+        #expect(keymap.commands[0].command == "echo 'hi'")
+    }
+
+    @Test func doubleQuoteInsideSingleQuotesDoesNotOpenAQuotedSpan() {
+        // a `"` inside `'...'` is literal, so the `#` after the single-quoted arg still starts a comment.
+        let (keymap, diagnostics) = parseKeymap("command \"Y\" cmd+shift+y echo 'a\"b' # c")
+        #expect(diagnostics.isEmpty)
+        #expect(keymap.commands.count == 1)
+        #expect(keymap.commands[0].command == "echo 'a\"b'")
+    }
+
     @Test func parseUnknownVerbDiagnostic() {
         let (keymap, diagnostics) = parseKeymap("bind cmd+d toggle_split")
         #expect(keymap.builtinOverrides.isEmpty)
@@ -513,5 +537,50 @@ struct KeymapTests {
         // each diagnostic names the OTHER offending command by name.
         #expect(diagnostics.contains { $0.message.contains("'Lead'") && $0.message.contains("'Leader'") })
         #expect(diagnostics.contains { $0.message.contains("'Leader'") && $0.message.contains("'Lead'") })
+    }
+
+    @Test func keymapStoreLoadsFileAndRecoversWhenMissing() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("agterm-keymap-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = KeymapStore(configDirectory: dir)
+
+        #expect(store.path == ConfigPaths.keymapPath(configDirectory: dir))
+        #expect(store.load().keymap.commands.isEmpty)
+        #expect(store.load().diagnostics.isEmpty)
+
+        try "command \"Greet\" ctrl+shift+y echo hi\n".write(to: store.path, atomically: true, encoding: .utf8)
+        let loaded = store.load()
+        #expect(loaded.keymap.commands.contains { $0.name == "Greet" })
+        #expect(loaded.diagnostics.isEmpty)
+    }
+
+    @Test func keymapStoreReportsMalformedKeymapDiagnostics() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("agterm-keymap-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = KeymapStore(configDirectory: dir)
+
+        try "map cmd+d not_an_action\ncommand \"Good\" ctrl+shift+y echo ok\n"
+            .write(to: store.path, atomically: true, encoding: .utf8)
+        let loaded = store.load()
+
+        #expect(loaded.keymap.commands.contains { $0.name == "Good" })
+        #expect(loaded.diagnostics.contains { $0.line == 1 && $0.message.contains("unknown action") })
+    }
+
+    @Test func keymapStoreReportsUnreadableTextFile() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("agterm-keymap-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = KeymapStore(configDirectory: dir)
+
+        try Data([0xff, 0xfe, 0xfd]).write(to: store.path)
+        let loaded = store.load()
+
+        #expect(loaded.keymap == Keymap(builtinOverrides: [:], commands: []))
+        #expect(loaded.diagnostics.count == 1)
+        #expect(loaded.diagnostics[0].line == 0)
+        #expect(loaded.diagnostics[0].message.contains("could not read keymap.conf"))
     }
 }
