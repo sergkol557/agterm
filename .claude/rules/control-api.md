@@ -46,6 +46,19 @@ paths:
      the socket client in `SocketClient.swift`) plus a thin `agtermctl` executable.
      It links `swift-argument-parser`; the `agtermCore` library target stays dependency-free.
      Builds with `swift build`, needs no Xcode/GhosttyKit.
+- **New/changed control commands are dispatcher-first** (the `refactor`/`hoist` migration, #78 onward).
+  A host-free `ControlDispatcher` in `agtermCore` (`ControlDispatcher.swift`) now fronts layer 2's dispatch:
+  its `dispatch(_:)` owns command parsing, argument validation, error strings, and the success-response
+  shape, calling the app through the `ControlActions` protocol, which `ControlServer` conforms to and
+  which supplies ONLY target resolution and the AppKit/process side effects.
+  Commands migrate group-by-group; one the dispatcher doesn't yet own returns `nil` and falls through to
+  `ControlServer`'s existing switch, so that switch is a fallthrough for not-yet-migrated commands, NOT the
+  home for new ones.
+  So when adding or changing a command: put every host-free part (arg checks, error text, the payload) in
+  `ControlDispatcher` with a unit test, and put only the side effect behind a `ControlActions` method — do
+  NOT add fresh validation/response logic inline in the `ControlServer` switch.
+  (This is the control-channel case of the root `CLAUDE.md` "hoist host-free logic down into `agtermCore`"
+  module-boundary rule.)
 - **Bundling + install.**
   The `agterm` target's `Bundle agtermctl CLI` postBuildScript (`project.yml`) runs `swift build -c release --product agtermctl`,
   copies it to `agterm.app/Contents/MacOS/agtermctl`, ad-hoc signs the helper,
@@ -247,7 +260,7 @@ paths:
   `session.go` navigates BETWEEN sessions — `args.to` is `next`|`prev`|`first`|`last`|`next-attention`|`prev-attention`
   and acts on the target store's CURRENT selection (it is RELATIVE, so it resolves the placement store
   via `resolvePlacementStore` rather than a session target — there is NO `--target`),
-  stops at the ends on next/prev (no wrap), jumps to the ends for first/last,
+  WRAPS around on next/prev (an end lands on the opposite end, within the filtered set), jumps to the ends for first/last,
   and for `next-attention`/`prev-attention` steps through ONLY the sessions needing attention (`AgentStatus.needsAttention`
   = `blocked`/`completed`) WRAPPING around (skipping idle/active), drives `AppStore.navigateSession`,
   and returns the newly-selected id in `result.id`.
@@ -295,10 +308,27 @@ paths:
   (the last two also `validate()`-guarded); and round-trip + e2e (`testSessionNewWithCommandRunsAsProcess`,
   `testSessionNewWithName`, `testSessionNewWorkspaceNameCreatesThenReuses`) cover them.
   `session.type` injects into the target surface.
+  `args.pane` picks the pane like `session.text` (`left`|`right`|`scratch`, no `other`):
+  omitted/`left` is the MAIN pane (omitted deliberately keeps the pre-pane behavior — always the main
+  pane, NOT the focused/on-screen one, so existing automation is unaffected);
+  `right` injects into the split surface, `session has no split pane` without one;
+  `scratch` injects into the session's scratch terminal, typable even while HIDDEN (its surface is kept
+  alive), `session has no scratch terminal` when none has been opened;
+  and an unknown value is an `invalid pane` error — all validated SERVER-SIDE in `injectText`
+  (mirroring the CLI `validate()`), so a raw socket client can't bypass it.
   Every session is realized eagerly (the deck mounts all at startup), so any session is normally typable
   WITHOUT `select`; `select:true` remains for the brief window before a just-created session is mounted
   (select, then a bounded poll, the `focusSplitPane` idiom), with `session not realized` the fallback
   if the surface still isn't up.
+  The realize/select path applies to the MAIN pane only — a split pane is never created by selecting,
+  so `pane:right`/`pane:scratch` inject into the existing surface or error.
+  Four-point keep-in-sync audit for `session.type --pane`: (1) reuses `ControlArgs.pane` in
+  `ControlProtocol.swift` (no new field), (2) the pane switch in `injectText`
+  (`ControlServer+SurfaceIO.swift`), (3) the `session type --pane left|right|scratch` option
+  (`validate()`-guarded) in `agtermctlKit`, (4) round-trip in `ControlProtocolTests` + CLI mapping in
+  `CommandsTests` + the e2e (`testSessionTypePaneRightReachesSplitPane`,
+  `testSessionTypePaneRightWithoutSplitErrors`, `testSessionTypeRejectsInvalidPaneServerSide`) in
+  `SessionTypePaneUITests` (a `ControlAPITestCase` subclass like `SessionTextUITests`).
   `GhosttySurfaceView.inject(text:)` types via `ghostty_surface_key` keystrokes (printable runs as key-with-`text`,
   each `\n`/`\r`/`\r\n` as a Return keypress, keycode 36) — NOT `ghostty_surface_text`,
   whose bracketed-paste wrapping suppresses Enter and leaks `\e[200~`/`\e[201~` markers when fired rapidly.
@@ -314,13 +344,15 @@ paths:
   `ghostty_surface_read_text` → copy out of `ghostty_text_s` → `ghostty_surface_free_text`) and returns it in `result.text`
   — `args.all` adds scrollback, `args.lines N` keeps the last N CONTENT lines (trailing blank grid rows
   trimmed so a non-scrolled screen returns content, not padding), and `args.pane` (`left`→main,
-  `right`→split-else-`session has no split` error, omitted→the ON-SCREEN surface via the shared
-  `Session.onScreenSurface` (scratch-when-covering else the focused pane, the SAME resolution `session.search`
-  uses), so a no-`pane` read returns what's visible, not a pane hidden under the scratch) picks the pane.
+  `right`→split-else-`session has no split` error, `scratch`→the scratch terminal's surface, readable even
+  while HIDDEN since it is kept alive (`session has no scratch terminal` when none opened),
+  omitted→the ON-SCREEN surface via the shared `Session.onScreenSurface` (scratch-when-covering else the
+  focused pane, the SAME resolution `session.search` uses), so a no-`pane` read returns what's visible,
+  not a pane hidden under the scratch) picks the pane.
   `args.all`+`args.lines` are mutually exclusive and `args.lines` must be > 0 — validated SERVER-SIDE in
   `readText` (mirroring the CLI `validate()`), NOT only CLI-side, so a raw socket client can't bypass it
   (an unchecked `lines ≤ 0` would otherwise fall through to the full buffer).
-  UNLIKE `session.focus`, the `pane` here is `left|right` ONLY (no `other`).
+  UNLIKE `session.focus`, the `pane` here is `left|right|scratch` (no `other`).
   A genuinely BLANK screen reads `ok` with an empty string (NOT an error, on purpose — differs from `session.copy`'s
   `no selection`), but a FAILED `ghostty_surface_read_text` is a `failed to read surface buffer` error:
   `readScreenText` returns `""` for the empty read and nil ONLY for a real failure, which `readText` maps
@@ -329,7 +361,7 @@ paths:
   so `--ansi` is out of scope until a styled surface read lands upstream and the pin is bumped.
   Four-point keep-in-sync audit for `session.text`: (1) `case sessionText = "session.text"` + new `ControlArgs.all: Bool?`/`lines: Int?`
   (reuses `pane` + `ControlResult.text`) in `ControlProtocol.swift`, (2) the `.sessionText` dispatch arm (`readText`)
-  in `ControlServer`, (3) the `session text [--all] [--lines N] [--pane left|right]` subcommand in `agtermctlKit`
+  in `ControlServer`, (3) the `session text [--all] [--lines N] [--pane left|right|scratch]` subcommand in `agtermctlKit`
   (`validate()` guards the flag combos, re-enforced SERVER-SIDE in `readText`), (4) round-trip tests in
   `ControlProtocolTests` + the e2e (`testSessionTextReturnsBuffer`, `testSessionTextSplitPaneWithoutSplitErrors`,
   `testSessionTextRejectsInvalidArgsServerSide`, `testSessionTextBlankScreenReturnsOkEmpty`) in `SessionTextUITests`
@@ -541,7 +573,7 @@ paths:
   Pair with `sidebar.mode flagged` to view just the flagged sessions.
   Four-point keep-in-sync audit for `session.flag`: (1) `case sessionFlag = "session.flag"` in `ControlProtocol.swift`
   (reuses `ControlArgs.mode`; adds `flagged` to `ControlSessionNode`), (2) the `.sessionFlag` dispatch
-  arm (`flagSession`) in `ControlServer`, (3) the `session flag on|off|toggle|clear` subcommand (`FlagCommand`)
+  arm (`setSessionFlag`) in `ControlServer`, (3) the `session flag on|off|toggle|clear` subcommand (`FlagCommand`)
   in `agtermctlKit`, (4) round-trip in `ControlProtocolTests` + the e2e `testSessionFlagAndSidebarModeFlagged`
   in `ControlSidebarStatusUITests`.
   `sidebar.mode` (frontmost window) flips the sidebar VIEW between the workspace tree and the flat flagged

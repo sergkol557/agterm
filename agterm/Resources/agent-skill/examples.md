@@ -31,7 +31,13 @@ realized eagerly, so no `--select` is needed.
 sid=$(agtermctl session new --cwd "$HOME/project" --json | jq -r '.result.id')
 agtermctl session type "git status" --target "$sid"
 agtermctl session type $'\n' --target "$sid"     # send Return (or include it in the text)
+agtermctl session split on --target "$sid"                    # open a split first
+agtermctl session type $'ls\n' --target "$sid" --pane right   # then type into the split pane
 ```
+
+Typing goes to the session's main (left) pane by default; `--pane right` targets the split pane and
+errors with `session has no split pane` when there is none. In a custom keymap command, `$AGT_PANE`
+holds the pane the shortcut fired from, so `session type --pane "$AGT_PANE"` types back into it.
 
 Run a command AS the session's process (closes when it exits, no echoed command line):
 
@@ -232,8 +238,19 @@ default, the whole scrollback with `--all`, or the last N lines with `--lines N`
 agtermctl session text                         # the visible screen of the focused pane
 agtermctl session text --lines 50              # the last 50 lines of the buffer
 agtermctl session text --pane right            # the split pane (errors if there is no split)
+agtermctl session text --pane scratch --all    # the scratch terminal's full buffer, even while it's hidden
 # extract every URL from the full scrollback:
 agtermctl session text --all --json | jq -r '.result.text' | grep -oE 'https?://[^ ]+'
+```
+
+`--pane scratch` reads (and `session type --pane scratch` writes) the session's scratch terminal whether
+or not it is on screen, since its shell is kept alive when hidden. Handy for "I ran a deploy in the
+scratch, read its output and tell me what broke" without leaving the scratch open:
+
+```bash
+agtermctl session scratch on                             # open the scratch once so it exists
+agtermctl session type $'./deploy.sh\n' --pane scratch   # run it in the scratch (even after you hide it)
+agtermctl session text --pane scratch --all              # read the result back
 ```
 
 ## Search the terminal scrollback

@@ -336,11 +336,16 @@ final class ControlServer {
         // refresh the read cache within this same main-actor execution (a window mutation just ran), so
         // the background fast path sees the new state without a separate hop that could stall.
         defer { refreshWindowCache() }
+        if let response = await ControlDispatcher(actions: self).dispatch(request) {
+            return response
+        }
         switch request.cmd {
-        case .tree:
-            return resolver.resolvePlacementStore(request.args?.window) { store in
-                ControlResponse(ok: true, result: ControlResult(tree: buildTree(in: store)))
-            }
+        case .tree, .sessionNew, .sessionMove, .workspaceMove, .workspaceFocus, .sessionSplit,
+                .sessionScratch, .sessionFocus, .sessionResize, .sessionStatus, .sessionFlag,
+                .notify, .fontInc, .fontDec, .fontReset, .keymapReload, .configReload,
+                .themeSet, .themeList, .sidebar, .sidebarMode, .sidebarExpand, .sidebarCollapse,
+                .sessionType, .sessionCopy, .sessionOverlayOpen, .sessionOverlayClose, .sessionOverlayResult:
+            return ControlResponse(ok: false, error: "control dispatcher did not handle \(request.cmd.rawValue)")
         case .sessionSelect:
             return resolver.resolveSession(request.target, window: request.args?.window) { store, id in
                 store.selectSession(id)
@@ -393,41 +398,6 @@ final class ControlServer {
                 store.removeWorkspace(id)
                 return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
             }
-        case .sessionNew:
-            // the destination workspace is addressed one of two mutually-exclusive ways: `workspace`
-            // (id / unique prefix / `active`, the default) or `workspaceName` (the sidebar label),
-            // the latter optionally with `createWorkspace` to add it when absent. create needs a name —
-            // there is nothing to create by id. cwd/command/name are applied in makeSessionResponse.
-            let args = request.args
-            if args?.workspace != nil, args?.workspaceName != nil {
-                return ControlResponse(ok: false, error: "use either --workspace or --workspace-name, not both")
-            }
-            if args?.createWorkspace == true, args?.workspaceName == nil {
-                return ControlResponse(ok: false, error: "--create-workspace requires --workspace-name")
-            }
-            return resolver.resolvePlacementStore(args?.window) { store in
-                // name addressing: reuse-or-create with `createWorkspace`, else require an existing match.
-                if let name = args?.workspaceName {
-                    // a blank name can neither be found NOR created — report that directly rather than
-                    // suggesting --create-workspace (which would also reject a blank name).
-                    guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                        return ControlResponse(ok: false, error: "workspace name must not be blank")
-                    }
-                    let workspace = args?.createWorkspace == true
-                        ? store.ensureWorkspace(named: name)
-                        : store.workspace(named: name)
-                    guard let workspace else {
-                        return ControlResponse(ok: false, error: "no workspace named \"\(name)\" (pass --create-workspace to add it)")
-                    }
-                    return makeSessionResponse(in: store, workspaceID: workspace.id, args: args)
-                }
-                // id addressing (default `active`): the canonical prefix/active resolver.
-                let target = args?.workspace ?? "active"
-                return resolver.resolve(target, candidates: store.workspaces.map(\.id),
-                               active: store.currentWorkspaceID, noun: "workspace") { workspaceID in
-                    makeSessionResponse(in: store, workspaceID: workspaceID, args: args)
-                }
-            }
         case .sessionClose:
             return resolver.resolveSession(request.target, window: request.args?.window) { store, id in
                 store.closeSession(id)
@@ -441,46 +411,8 @@ final class ControlServer {
                 store.renameSession(id, to: name)
                 return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
             }
-        case .sessionMove:
-            return moveSession(request.target, window: request.args?.window,
-                               to: request.args?.to, workspace: request.args?.workspace)
-        case .workspaceMove:
-            return moveWorkspace(request.target, window: request.args?.window, to: request.args?.to)
-        case .workspaceFocus:
-            return focusWorkspace(request.target, window: request.args?.window, mode: request.args?.mode)
-        case .sessionType:
-            guard let text = request.args?.text else {
-                return ControlResponse(ok: false, error: "session.type requires text")
-            }
-            // resolve first (cross-window when no `args.window`), then realize-and-inject; the realize
-            // path is async (bounded poll), so this can't go through the synchronous `resolveSession`
-            // helper. the not-found / ambiguous error strings must stay in sync with `resolve(...)`.
-            switch resolver.resolveSessionTarget(request.target, window: request.args?.window) {
-            case .failure(let response):
-                return response
-            case .success(let (store, id)):
-                return await injectText(text, into: id, store: store, select: request.args?.select ?? false)
-            }
-        case .sessionSplit:
-            return splitSession(request.target, window: request.args?.window, mode: request.args?.mode)
-        case .sessionScratch:
-            return scratchSession(request.target, window: request.args?.window, mode: request.args?.mode,
-                                  command: request.args?.command)
-        case .sessionFocus:
-            return focusSessionPane(request.target, window: request.args?.window, pane: request.args?.pane)
-        case .sessionResize:
-            return resizeSplit(request.target, window: request.args?.window,
-                               ratio: request.args?.ratio, delta: request.args?.ratioDelta)
-        case .sessionStatus:
-            return setSessionStatus(request.target, window: request.args?.window,
-                                    update: StatusUpdate(status: request.args?.status, blink: request.args?.blink,
-                                                         autoReset: request.args?.autoReset, sound: request.args?.sound))
-        case .sessionFlag:
-            return flagSession(request.target, window: request.args?.window, mode: request.args?.mode)
         case .sessionBackground:
             return setBackground(request.target, request.args)
-        case .sessionCopy:
-            return copySelection(request.target, window: request.args?.window)
         case .sessionText:
             return readText(request.target, window: request.args?.window, pane: request.args?.pane,
                             all: request.args?.all ?? false, lines: request.args?.lines)
@@ -494,68 +426,8 @@ final class ControlServer {
             case .success(let (store, id)):
                 return await searchSession(id, store: store, text: request.args?.text, to: request.args?.to)
             }
-        case .sessionOverlayOpen:
-            guard let command = request.args?.command, !command.isEmpty else {
-                return ControlResponse(ok: false, error: "session.overlay.open requires a command")
-            }
-            if let color = request.args?.color, !WatermarkConfig.isValidColorHex(color) {
-                return ControlResponse(ok: false, error: "invalid color: \(color) (#rrggbb)")
-            }
-            return resolver.resolveSession(request.target, window: request.args?.window) { store, id in
-                guard store.openOverlay(id, command: command, cwd: request.args?.cwd,
-                                        wait: request.args?.wait ?? false,
-                                        sizePercent: request.args?.sizePercent,
-                                        backgroundColor: request.args?.color) else {
-                    return ControlResponse(ok: false, error: "overlay already open")
-                }
-                // a FLOATING overlay (sizePercent set) renders only for the ACTIVE session, so on a non-active
-                // target its surface never mounts and its program never runs — and `--block` would poll
-                // forever. select the target so it mounts and runs (the full overlay mounts in the eager deck
-                // regardless, so this only matters for floating).
-                if request.args?.sizePercent != nil {
-                    store.selectSession(id)
-                }
-                return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
-            }
-        case .sessionOverlayClose:
-            return resolver.resolveSession(request.target, window: request.args?.window) { store, id in
-                guard store.closeOverlay(id) else {
-                    return ControlResponse(ok: false, error: "no overlay")
-                }
-                return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
-            }
-        case .sessionOverlayResult:
-            return resolver.resolveSession(request.target, window: request.args?.window) { store, id in
-                guard let session = store.session(withID: id) else {
-                    return ControlResponse(ok: false, error: "no such session")
-                }
-                if session.overlayActive {
-                    return ControlResponse(ok: false, error: OverlayResultError.stillRunning)
-                }
-                guard let code = session.overlayExitCode else {
-                    return ControlResponse(ok: false, error: OverlayResultError.noResult)
-                }
-                return ControlResponse(ok: true, result: ControlResult(id: id.uuidString, exitCode: code))
-            }
         case .quick:
             return setQuickTerminal(mode: request.args?.mode)
-        case .sidebar:
-            return setSidebar(mode: request.args?.mode)
-        case .sidebarMode:
-            return setSidebarViewMode(mode: request.args?.mode)
-        case .sidebarExpand:
-            return expandWorkspaces(window: request.args?.window)
-        case .sidebarCollapse:
-            return collapseWorkspaces(window: request.args?.window)
-        case .notify:
-            return sendNotification(request.target, window: request.args?.window,
-                                    title: request.args?.title, body: request.args?.body)
-        case .fontInc:
-            return font(request.target, window: request.args?.window, action: "increase_font_size:1")
-        case .fontDec:
-            return font(request.target, window: request.args?.window, action: "decrease_font_size:1")
-        case .fontReset:
-            return font(request.target, window: request.args?.window, action: "reset_font_size")
         case .windowNew:
             return windowNew(name: request.args?.name)
         case .windowList:
@@ -574,15 +446,6 @@ final class ControlServer {
             return windowMove(request.target, x: request.args?.x, y: request.args?.y, display: request.args?.display)
         case .windowZoom:
             return windowZoom(request.target)
-        case .keymapReload:
-            return reloadKeymap()
-        case .configReload:
-            return reloadGhosttyConfig()
-        case .themeSet:
-            return setTheme(name: request.args?.name)
-        case .themeList:
-            return ControlResponse(ok: true, result: ControlResult(theme: actions.currentTheme,
-                                                                    themes: actions.availableThemes()))
         case .restoreClear:
             return clearSavedCommands()
         }
@@ -604,7 +467,7 @@ final class ControlServer {
 
     /// Project a window's workspace tree into the wire `ControlTree`, marking the active session and the
     /// active workspace (the one owning the selected session).
-    private func buildTree(in store: AppStore) -> ControlTree {
+    func buildTree(in store: AppStore) -> ControlTree {
         let shellBasename = ProcessInfo.processInfo.environment["SHELL"].map(CommandRestore.basename)
         return store.controlTree(
             foreground: { session in
@@ -624,55 +487,15 @@ final class ControlServer {
     /// optional command/name), focuses it when it lands in the frontmost window (so a keymap `session new`
     /// opens focused like the GUI New Session; a background `--window` target keeps focus), and returns the
     /// new id. Shared by the id- and name-addressed paths of the `.sessionNew` arm.
-    private func makeSessionResponse(in store: AppStore, workspaceID: UUID, args: ControlArgs?) -> ControlResponse {
-        let cwd = args?.cwd ?? FileManager.default.homeDirectoryForCurrentUser.path
+    func makeSessionResponse(in store: AppStore, workspaceID: UUID,
+                             options: ControlSessionCreateOptions) -> ControlResponse {
+        let cwd = options.cwd ?? FileManager.default.homeDirectoryForCurrentUser.path
         guard let session = store.addSession(toWorkspace: workspaceID, cwd: cwd,
-                                             command: args?.command, name: args?.name) else {
+                                             command: options.command, name: options.name) else {
             return ControlResponse(ok: false, error: "could not create session")
         }
         if store === library.activeStore { actions.focusActiveSession() }
         return ControlResponse(ok: true, result: ControlResult(id: session.id.uuidString))
-    }
-
-    // MARK: - Keymap
-
-    /// Re-read and re-parse `keymap.conf`, returning the count of parse diagnostics. The SAME
-    /// `reloadKeymap()` path the GUI's File ▸ Reload Keymap menu/palette item drives, so the menu/palette
-    /// and `keymap.reload` never diverge — control-native here only in the count it reports back.
-    private func reloadKeymap() -> ControlResponse {
-        settingsModel.reloadKeymap()
-        return ControlResponse(ok: true, result: ControlResult(count: settingsModel.keymapDiagnostics.count))
-    }
-
-    // MARK: - Config
-
-    /// Re-read and apply the ghostty config, returning the config-diagnostic count (0 = clean), counted
-    /// across ALL config sources (bundled defaults, the global `~/.config/ghostty/config`, the agterm-scoped
-    /// `ghostty.conf`, and the UI settings conf) — libghostty diagnostics carry no source-file attribution.
-    /// The SAME `AppActions.reloadGhosttyConfig()` path the GUI's File ▸ Reload Config menu/palette item
-    /// drives (which posts the warning banner on diagnostics), so the GUI and `config.reload` never diverge
-    /// — control-native here only in the count it reports back. The count is the value the reload actually
-    /// produced (threaded back from the reload), not a separate re-read. App-global (one settings model +
-    /// one GhosttyApp), so no `--window` selector, like `keymap.reload`.
-    private func reloadGhosttyConfig() -> ControlResponse {
-        ControlResponse(ok: true, result: ControlResult(count: actions.reloadGhosttyConfig()))
-    }
-
-    // MARK: - Theme
-
-    /// Set + persist a theme by name — the control half of the Settings picker / the `.themes` palette
-    /// commit (no live preview over the socket). A nil/empty name selects ghostty's built-in colors
-    /// ("default ghostty"), NOT the seeded `agterm` app default; any other name must be a bundled theme,
-    /// else an error (a typo silently doing nothing is worse than a fail). Returns the applied theme in
-    /// `result.theme` (nil = ghostty built-in). App-global: one `SettingsModel`, so no `--window` selector.
-    private func setTheme(name: String?) -> ControlResponse {
-        let resolved = ThemeCatalog.resolvedName(name)
-        let catalog = ThemeCatalog(names: actions.availableThemes())
-        if let resolved, !catalog.contains(name: resolved) {
-            return ControlResponse(ok: false, error: "unknown theme: \(resolved)")
-        }
-        actions.setTheme(resolved)
-        return ControlResponse(ok: true, result: ControlResult(theme: resolved))
     }
 
     /// `value` trimmed of surrounding whitespace, or nil if absent or blank after trimming.

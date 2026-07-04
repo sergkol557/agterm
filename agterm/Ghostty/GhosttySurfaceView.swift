@@ -101,6 +101,13 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
     /// input-driven clear, covering the decline case Claude Code fires no hook for.
     var onUserInputClearsStatus: (() -> Void)?
 
+    /// Called on the main actor on EVERY keystroke into this surface, so the app can stamp user activity
+    /// and reset the window's auto-follow idle timer. Unlike `onUserInputClearsStatus` (which fires only on
+    /// a status-clearing key), this fires unconditionally — ordinary typing in an idle session must count as
+    /// activity or the user would be yanked to a blocked session mid-type. Set by the factory to call the
+    /// owning window's `AppStore.noteUserActivity()`.
+    var onUserInput: (() -> Void)?
+
     /// Called on the main actor with the surface's current font size (points) when it
     /// changes (cmd +/-), so the app can persist it. Set by the factory on the primary
     /// surface only. libghostty has no font-size getter or change event, so this is driven
@@ -345,10 +352,13 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
     /// command execution and leak `\e[200~`/`\e[201~` markers when fired rapidly. Printable runs are sent as
     /// key-with-text events; every line ending (`\n`, `\r`, or `\r\n`) is a real Return keypress, so a
     /// trailing newline submits the command and a multi-line payload runs line by line. The bytes are
-    /// copied via `withCString`, so no buffer must outlive the call. A no-op when the surface has not been
-    /// created yet (a never-shown session); the caller realizes it first.
-    func inject(text: String) {
-        guard let surface else { return }
+    /// copied via `withCString`, so no buffer must outlive the call. Returns `false` (a no-op) when the
+    /// surface has not been created yet (a never-shown / just-shown session), so a caller injecting into a
+    /// pane with no realize/select path (`right`/`scratch`) can report `session not realized` instead of a
+    /// false ok; the main-pane path realizes it first via select+poll.
+    @discardableResult
+    func inject(text: String) -> Bool {
+        guard let surface else { return false }
         for segment in KeystrokeSegments.split(text) {
             switch segment {
             case let .text(segment):
@@ -362,6 +372,7 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
                 sendReturn(to: surface)
             }
         }
+        return true
     }
 
     /// Inserts `text` into this surface as a bracketed paste — the drag-drop path. Unlike `inject(text:)`,
@@ -768,6 +779,7 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
         onExitCodeCaptured = nil
         onFocusChange = nil
         onUserInputClearsStatus = nil
+        onUserInput = nil
         onFontSizeChange = nil
         onSearchStart = nil
         onSearchEnd = nil

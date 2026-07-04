@@ -98,25 +98,27 @@ final class SessionTextUITests: ControlAPITestCase {
         XCTAssertTrue(viewport.contains("\(tag)-400-X"), "the default (VIEWPORT) read should still show the most recent line")
     }
 
-    // session.text --pane left|right reads the matching pane of a split. session.type is main-only (it always
-    // injects into session.surface), so the LEFT marker goes in over the socket; the RIGHT pane is fed via
-    // the real keyboard after focusing it. Assert each pane read returns its OWN marker and NOT the other's —
-    // the --pane success mappings (left→surface, right→splitSurface) are otherwise only hit on the error path.
+    // session.text --pane left|right reads the matching pane of a split. The LEFT marker goes in over the
+    // socket (a no-pane session.type injects into the main pane); the RIGHT pane is fed via the real
+    // keyboard after focusing it — deliberately NOT via `session.type --pane right` (that route has its own
+    // e2e in SessionTypePaneUITests), so this test also proves the focus→keyboard first-responder routing.
+    // Assert each pane read returns its OWN marker and NOT the other's — the --pane success mappings
+    // (left→surface, right→splitSurface) are otherwise only hit on the error path.
     func testSessionTextPaneSelectsCorrectPane() throws {
         let split = try sendCommand(#"{"cmd":"session.split","target":"active","args":{"mode":"on"}}"#)
         XCTAssertEqual(split["ok"] as? Bool, true, "split on should succeed: \(split)")
         XCTAssertTrue(pollActiveSessionSplit(true, timeout: 10), "the active session should report split:true")
         let activeID = try activeSessionID()
 
-        // LEFT (main) pane: session.type injects into session.surface (main-only by design), so this marker
-        // lands in the left pane regardless of which pane holds focus.
+        // LEFT (main) pane: a no-pane session.type injects into session.surface (the main pane), so this
+        // marker lands in the left pane regardless of which pane holds focus.
         let leftMarker = "LEFT-\(UUID().uuidString.prefix(8))"
         XCTAssertNotNil(try pollPaneText(target: activeID, pane: "left", contains: leftMarker, retype: {
             _ = try self.sendCommand(self.typeRequest(text: "echo \(leftMarker)\n", target: activeID, select: false))
         }), "--pane left should read the marker typed into the main pane")
 
-        // RIGHT (split) pane: session.type can't reach it, so focus it and type via the real keyboard, which
-        // routes to the focused pane's first responder.
+        // RIGHT (split) pane: focus it and type via the real keyboard, which routes to the focused pane's
+        // first responder.
         let rightMarker = "RIGHT-\(UUID().uuidString.prefix(8))"
         XCTAssertEqual(try sendCommand(#"{"cmd":"session.focus","target":"\#(activeID)","args":{"pane":"right"}}"#)["ok"] as? Bool,
                        true, "focus right should succeed")
@@ -183,23 +185,49 @@ final class SessionTextUITests: ControlAPITestCase {
         XCTAssertTrue(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "a blank screen should read as empty, got: \(text)")
     }
 
-    /// Polls `session.text --pane <pane>` of `target` until the returned buffer contains `contains`, re-running
-    /// `retype` (which re-injects the marker command — idempotent for an `echo` line) at the start of each
-    /// outer attempt to ride out shell/focus readiness. Returns the matching text, or nil on timeout.
-    @discardableResult
-    private func pollPaneText(target: String, pane: String, contains: String,
-                              attempts: Int = 8, perAttempt: Int = 8,
-                              retype: () throws -> Void) throws -> String? {
-        for _ in 0..<attempts {
-            try retype()
-            for _ in 0..<perAttempt {
-                let response = try sendCommand(#"{"cmd":"session.text","target":"\#(target)","args":{"pane":"\#(pane)"}}"#)
-                if let t = (response["result"] as? [String: Any])?["text"] as? String, t.contains(contains) {
-                    return t
-                }
-                RunLoop.current.run(until: Date().addingTimeInterval(0.4))
-            }
-        }
-        return nil
+    // `--pane scratch` reads (and `session.type --pane scratch` writes) the scratch terminal whether or not
+    // it is on screen, since its surface is kept alive when hidden. Open the scratch, echo a marker into it,
+    // read it back, then HIDE it and prove the buffer is still readable AND still writable via --pane scratch.
+    // The arithmetic ($((6*7)) -> 42) proves the scratch's own shell RAN the line, not merely echoed it.
+    func testSessionScratchPaneReadsAndWritesEvenWhenHidden() throws {
+        let activeID = try activeSessionID()
+
+        let on = try sendCommand(#"{"cmd":"session.scratch","target":"\#(activeID)","args":{"mode":"on"}}"#)
+        XCTAssertEqual(on["ok"] as? Bool, true, "session.scratch on should succeed: \(on)")
+
+        let tag = "SCRATCH-\(UUID().uuidString.prefix(8))"
+        let shown = try pollPaneText(target: activeID, pane: "scratch", contains: "\(tag)-42", retype: {
+            _ = try self.sendCommand(self.typeRequest(text: "echo \(tag)-$((6*7))\n", target: activeID,
+                                                      select: false, pane: "scratch"))
+        })
+        XCTAssertNotNil(shown, "session.text --pane scratch should read the scratch's own buffer while it is shown")
+
+        // hide the scratch (keep-alive) and confirm its buffer is STILL readable via --pane scratch.
+        let off = try sendCommand(#"{"cmd":"session.scratch","target":"\#(activeID)","args":{"mode":"off"}}"#)
+        XCTAssertEqual(off["ok"] as? Bool, true, "session.scratch off should succeed: \(off)")
+        let hidden = try XCTUnwrap((try sendCommand(#"{"cmd":"session.text","target":"\#(activeID)","args":{"pane":"scratch","all":true}}"#)["result"] as? [String: Any])?["text"] as? String)
+        XCTAssertTrue(hidden.contains("\(tag)-42"), "a hidden scratch's buffer must still be readable via --pane scratch, got: \(hidden)")
+
+        // and it must still be WRITABLE while hidden: type a fresh marker via --pane scratch and read it back.
+        let tag2 = "HIDDEN-\(UUID().uuidString.prefix(8))"
+        let afterHiddenWrite = try pollPaneText(target: activeID, pane: "scratch", contains: "\(tag2)-42", retype: {
+            _ = try self.sendCommand(self.typeRequest(text: "echo \(tag2)-$((6*7))\n", target: activeID,
+                                                      select: false, pane: "scratch"))
+        })
+        XCTAssertNotNil(afterHiddenWrite, "session.type --pane scratch must reach the scratch even while it is hidden")
+    }
+
+    // --pane scratch on a session that never opened a scratch errors on both read and write, server-side.
+    func testSessionScratchPaneWithoutScratchErrors() throws {
+        let created = try sendCommand(#"{"cmd":"session.new"}"#)
+        let newID = try XCTUnwrap((created["result"] as? [String: Any])?["id"] as? String, "session.new should return the new id")
+
+        let read = try sendCommand(#"{"cmd":"session.text","target":"\#(newID)","args":{"pane":"scratch"}}"#)
+        XCTAssertEqual(read["ok"] as? Bool, false, "reading a nonexistent scratch should fail: \(read)")
+        XCTAssertEqual(read["error"] as? String, "session has no scratch terminal")
+
+        let write = try sendCommand(#"{"cmd":"session.type","target":"\#(newID)","args":{"text":"x","select":false,"pane":"scratch"}}"#)
+        XCTAssertEqual(write["ok"] as? Bool, false, "typing into a nonexistent scratch should fail: \(write)")
+        XCTAssertEqual(write["error"] as? String, "session has no scratch terminal")
     }
 }

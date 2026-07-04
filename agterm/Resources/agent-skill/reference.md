@@ -41,6 +41,12 @@ background spec set via `session background` — a `{kind, text?, imagePath?, co
 position?, repeats?}` object; `kind` is `image`/`text`/`color` — omitted when none is set). Workspace nodes carry
 `id`, `name`, `active`, `sessions`.
 
+The tree object itself carries two top-level read-only fields: `idleMs` (milliseconds since the last
+user input in the window, omitted before any activity) and `autoFollowMs` (the window's Auto-follow
+timeout in milliseconds, omitted when the setting is Disabled). `idleMs` is live and grows while the
+window is idle, so it is on `tree` only, never `window.list`. Both are read-only projections of GUI
+state; there is no control command to set them.
+
 ## workspace
 
 - `workspace new [name] [--window W]` — create a workspace; returns its id. Name defaults to an
@@ -82,27 +88,34 @@ position?, repeats?}` object; `kind` is `image`/`text`/`color` — omitted when 
 - `session go --to next|prev|first|last|next-attention|prev-attention [--window W]` — move the
   selection relative to the CURRENT one (no `--target`). Operates over the VISIBLE/FILTERED set: the
   flagged sessions in flagged mode, the focused workspace's sessions when a workspace is focused, else
-  all sessions (clearing the flag/focus restores the full set). next/prev stop at the ends (no wrap);
-  first/last jump to the ends of that set; next-attention/prev-attention step only through the filtered
+  all sessions (clearing the flag/focus restores the full set). next/prev wrap around at the ends (last→first,
+  first→last); first/last jump to the ends of that set; next-attention/prev-attention step only through the filtered
   sessions needing attention (status blocked/completed), wrapping. Returns the newly selected id.
 - `session move <workspace> [--target] [--window W]` — relocate the session to another workspace
   (appends). OR `session move --to up|down|top|bottom [--target]` — reorder within its workspace.
   Exactly one of the positional workspace or `--to` is required.
-- `session type <text> [--stdin] [--select] [--target] [--window W]` — inject text as real keystrokes
-  (printable runs plus Return for each newline; no bracketed-paste markers). `--stdin` reads the text
-  from stdin instead of the argument. `--select` selects (and realizes) a never-shown session before
-  injecting. Any realized session is normally typable without `--select`.
+- `session type <text> [--stdin] [--select] [--pane left|right|scratch] [--target] [--window W]` — inject text
+  as real keystrokes (printable runs plus Return for each newline; no bracketed-paste markers).
+  `--stdin` reads the text from stdin instead of the argument. `--select` selects (and realizes) a
+  never-shown session before injecting. Any realized session is normally typable without `--select`.
+  `--pane left` types into the main pane (the default when omitted), `--pane right` into the split pane
+  (errors with `session has no split pane` when the session has no split), `--pane scratch` into the
+  session's scratch terminal even while it is hidden (`session has no scratch terminal` when none opened);
+  like `session text`, no `other` value. `--select` realizes the MAIN pane only — a split pane must
+  already exist.
 - `session copy [--target] [--window W]` — returns `result.text` with the session's current selection.
   Does NOT touch the system clipboard (pipe the returned text into another `session type`). No/empty
   selection → `no selection` error. Selection is readable on any realized session regardless of focus.
-- `session text [--all] [--lines N] [--pane left|right] [--target] [--window W]` — returns `result.text`
+- `session text [--all] [--lines N] [--pane left|right|scratch] [--target] [--window W]` — returns `result.text`
   with the session's terminal buffer as PLAIN TEXT (no ANSI/color). By default it reads the VISIBLE
   SCREEN of the on-screen pane. `--all` reads the whole buffer including scrollback; `--lines N` reads the
   full buffer and keeps only the last N CONTENT lines (trailing blank rows trimmed; `--all` and `--lines`
   are mutually exclusive and `--lines` must be > 0 — enforced server-side too). `--pane left` reads the
-  main pane, `--pane right` the split pane (errors if the session has no split); omit `--pane` for the
-  visible pane (the scratch terminal when it covers the session, else the focused pane). NOTE: unlike
-  `session focus`, `--pane` here has NO `other` value — only `left`/`right`. A genuinely BLANK screen is
+  main pane, `--pane right` the split pane (errors if the session has no split), `--pane scratch` the
+  session's scratch terminal even while it is hidden (its buffer is kept alive; `session has no scratch
+  terminal` when none opened); omit `--pane` for the visible pane (the scratch terminal when it covers the
+  session, else the focused pane). NOTE: unlike
+  `session focus`, `--pane` here has NO `other` value — only `left`/`right`/`scratch`. A genuinely BLANK screen is
   NOT an error (returns `ok` with an empty string, unlike `session copy`'s `no selection`), but a failed
   read IS an error (`failed to read surface buffer`). Pipe the text into `grep`/`fzf` to extract URLs,
   paths, etc.
@@ -201,7 +214,11 @@ shell (no controlling terminal — `/dev/tty` errors). See examples.md for usage
 ## window
 
 - `window new [name]` — create and open a window; returns its id.
-- `window list` — `result.windows`, each with `id`, `name`, `open`, `active`.
+- `window list` — `result.windows`, each with `id`, `name`, `open`, `active`, and `autoFollowMs` (the
+  window's Auto-follow timeout in milliseconds, omitted when the setting is Disabled). The `autoFollowMs`
+  here is served from a cache and reflects the value as of the last refresh, so a just-changed setting may
+  lag until the next command. Unlike `tree`, `window.list` does NOT carry `idleMs` — the live idle metric
+  would freeze in that cache.
 - `window select <id>` — raise it if open, else open it.
 - `window close <id>` — close the on-screen window (the bundle is kept; reopen with select).
 - `window rename <id> <name>`.
@@ -302,6 +319,8 @@ so `{AGT_SESSION_NAME}` and `{AGT_SESSION_PWD}` are as untrusted as `{AGT_SELECT
 - `{AGT_SESSION_NAME}` / `$AGT_SESSION_NAME` — the session's display name (the focused pane's terminal title, remote-settable via OSC).
 - `{AGT_SESSION_PWD}` / `$AGT_SESSION_PWD` — the focused pane's working directory.
 - `{AGT_SELECTION}` / `$AGT_SELECTION` — the current selection.
+- `{AGT_PANE}` / `$AGT_PANE` — the pane the command fired from: `left` (main) or `right` (split). Feed
+  it back as `session type --pane "$AGT_PANE"` to type into the very pane the shortcut was pressed in.
 - Plus the other `$AGT_*` context vars the runner exports.
 
 Built-in action names for `map` include: `new_window`, `new_workspace`, `new_session`,

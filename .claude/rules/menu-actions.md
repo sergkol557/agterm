@@ -182,7 +182,7 @@ paths:
   They are real menu items (the Navigate menu — see the menu-split note below),
   so AppKit menu dispatch swallows the shortcut before libghostty and nothing leaks to the shell.
   The pure logic is `AppStore.navigateSession(_:)` (host-free, unit-tested):
-  it flattens the tree (`workspaces.flatMap(\.sessions)`), stops at the ends on next/prev (no wrap),
+  it flattens the tree (`workspaces.flatMap(\.sessions)`), WRAPS around on next/prev (an end lands on the opposite end),
   jumps to the ends for first/last, falls to first on no/invalid selection,
   no-ops on an empty tree, and routes through `selectSession` (recency + badge + persist + workspace-derivation).
   It is shared by the menu, the action palette, and the control channel (`session.go`) so the three can't
@@ -259,6 +259,11 @@ paths:
   unit-tested) is pushed on every selection and pruned on close;
   the switcher snapshots it on `begin()` so cycling never reorders it (only the commit does,
   via `selectSession`).
+  `begin()` CAPS the snapshot at the 10 most-recent (`SessionSwitcher.maxCandidates` fed to
+  `RecencyStack.top(_:in:)`) — Ctrl-Tab is a quick jump, not a full list (the ⌃P fuzzy palette covers
+  everything); the recency STORE keeps its full 100-item history.
+  The cap can't be observed through XCUITest (the overlay only shows while Ctrl is HELD and `typeKey`
+  always releases the modifier), so it's covered host-free by `RecencyStackTests.topCapsResultAtRequestedCount`.
   The order is persisted (`Snapshot.sessionRecency`, an optional field like the other post-v1 additions)
   and re-seeded on restore — stale ids dropped, the restored selection floated to the front — so the
   switcher works right after a relaunch instead of starting empty (#110).
