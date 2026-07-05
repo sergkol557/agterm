@@ -35,7 +35,9 @@ Full detail for every `agtermctl` command. See `SKILL.md` for the model and addr
 when none reported; distinct from `name`, the derived sidebar label), `active` (selected),
 `split` (split shown), `overlay` (overlay shown), `scratch` (scratch shown), `flagged` (in the
 flagged working-set), `status` (the agent-status — `active`|`completed`|`blocked` — omitted when
-idle), `foreground`/`splitForeground` (the live argv of each pane's foreground
+idle), `statusPane` (which pane set that status — `left` (main) | `right` (split) | `scratch` — the
+`--pane` value from `session status`, omitted when unset or idle; gated on the same non-idle condition
+as `status`, so it is never reported without a `status`), `foreground`/`splitForeground` (the live argv of each pane's foreground
 process — what it is running — omitted when the pane sits at its shell prompt), and `background` (the
 background spec set via `session background` — a `{kind, text?, imagePath?, colorHex?, opacity?, fit?,
 position?, repeats?}` object; `kind` is `image`/`text`/`color` — omitted when none is set). Workspace nodes carry
@@ -68,7 +70,7 @@ state; there is no control command to set them.
 
 ## session
 
-- `session new [--cwd DIR] [--workspace W] [--workspace-name NAME] [--create-workspace] [--command CMD] [--name NAME] [--window W]`
+- `session new [--cwd DIR] [--workspace W] [--workspace-name NAME] [--create-workspace] [--command CMD] [--name NAME] [--after SID | --before SID] [--window W]`
   — create a session and focus it; returns the new id. `--cwd` sets the start directory (default
   `$HOME`). The destination workspace is addressed one of two mutually-exclusive ways: `--workspace`
   (id / unique prefix / `active`, the default) or `--workspace-name` (the sidebar label) — the latter
@@ -81,7 +83,13 @@ state; there is no control command to set them.
   running commands on restart** is on (default off → a restored session is a plain shell); a live
   captured foreground takes precedence over it. `--name`
   seeds the session's custom name (the sidebar label; blank/omitted leaves the auto basename),
-  equivalent to a `session rename` right after create.
+  equivalent to a `session rename` right after create. `--after SID` / `--before SID` place the new
+  session directly after / before an anchor session instead of appending at the end (the anchor is a
+  session address — id / unique prefix / `active`). The anchor CARRIES ITS OWN WORKSPACE (resolved
+  across all workspaces), so it names the destination workspace itself — `--after`/`--before` are
+  therefore mutually exclusive with each other and with `--workspace`/`--workspace-name` (the anchor
+  already picks the workspace). `agtermctl session new --after active` is the headline case: create
+  right after the current session in one round-trip.
 - `session close [--target] [--window W]`.
 - `session select [--target] [--window W]`.
 - `session rename <name> [--target] [--window W]`.
@@ -92,8 +100,13 @@ state; there is no control command to set them.
   first→last); first/last jump to the ends of that set; next-attention/prev-attention step only through the filtered
   sessions needing attention (status blocked/completed), wrapping. Returns the newly selected id.
 - `session move <workspace> [--target] [--window W]` — relocate the session to another workspace
-  (appends). OR `session move --to up|down|top|bottom [--target]` — reorder within its workspace.
-  Exactly one of the positional workspace or `--to` is required.
+  (appends). OR `session move --to up|down|top|bottom [--target]` — reorder within its workspace. OR
+  `session move --after SID | --before SID [--target]` — place the session directly after / before an
+  anchor session (id / unique prefix / `active`). The anchor CARRIES ITS OWN WORKSPACE (resolved across
+  all workspaces), so it relocates + positions in one shot, wherever the anchor lives — cross-workspace
+  placement falls out for free. Exactly one placement intent is required among {positional workspace,
+  `--to`, `--after`/`--before`}; `--after`/`--before` are mutually exclusive with each other, with `--to`,
+  and with a destination workspace (the anchor already names the workspace).
 - `session type <text> [--stdin] [--select] [--pane left|right|scratch] [--target] [--window W]` — inject text
   as real keystrokes (printable runs plus Return for each newline; no bracketed-paste markers).
   `--stdin` reads the text from stdin instead of the argument. `--select` selects (and realizes) a
@@ -149,7 +162,7 @@ state; there is no control command to set them.
   `0.05..0.95` and persisted, and the applied (clamped) fraction is printed (and returned as `result.ratio`
   under `--json`). Errors when the session has no split. Resizing a hidden split updates the stored
   fraction; it takes effect when the split is next shown.
-- `session status <idle|active|completed|blocked> [--blink] [--auto-reset] [--sound NAME] [--target] [--window W]` —
+- `session status <idle|active|completed|blocked> [--blink] [--auto-reset] [--sound NAME] [--color #rrggbb] [--pane left|right|scratch] [--target] [--window W]` —
   set the sidebar agent-status glyph. `--blink` pulses it (for attention). `--auto-reset` clears it
   back to idle once the session is visited (use for a one-shot completion flash). `--sound` plays a
   one-shot sound when the status is set: `default` (the system alert sound) or a system sound name
@@ -157,6 +170,21 @@ state; there is no control command to set them.
   `Sosumi`, `Submarine`, `Tink`; also any custom sound in `~/Library/Sounds`) — an unknown name errors.
   Without `--sound`, a `blocked` status plays the user's Settings "Blocked sound" if they configured one
   (Appearance ▸ Agent Status; off by default); an explicit `--sound` always overrides it.
+  `--color` (`#rrggbb`) overrides the glyph tint for THIS call only — it rides the status, so the next
+  `session status` without `--color` reverts to the Settings-configured color (a malformed hex errors).
+  Use it to distinguish states beyond the fixed palette (e.g. a caller-specific blocked color).
+  `--pane` (`left`|`right`|`scratch`, `left`=main, `right`=split; defaults to `left` when omitted) records
+  which pane set the status. It has two effects: (1) keystroke-clear becomes pane-scoped — a status set
+  from a background pane survives typing in a DIFFERENT pane (so a `right`- or `scratch`-tagged block is
+  no longer wiped by foreground typing in the main pane, and only a keystroke in the OWNING pane clears
+  it), and (2) any user-initiated GUI selection of the session lands on the tagged pane — auto-follow,
+  the attention-nav (⌃⌥↑/⌃⌥↓, the Navigate menu), plain session nav (⌥⌘↑/↓/first/last),
+  the command palettes, and a sidebar row click all reveal and focus it, flipping to the split or
+  showing a hidden scratch instead of the main pane. (The socket `session go next-attention|prev-attention`
+  only STEPS the selection to attention sessions; it does not itself move focus into the tagged pane — the
+  reveal is a GUI/auto-follow concern.) An agent that runs in a split or scratch should set its own pane so
+  the user lands on it. The value is read back on `tree` as the session node's `statusPane`. An invalid
+  value errors (`--pane must be left, right, or scratch`).
   An unknown state errors. Setting non-idle is for agents/hooks; `idle` clears it (also available in the GUI).
 - `session flag [on|off|toggle|clear] [--target] [--window W]` — flag/unflag a session for the flagged
   working-set view (a durable, persisted membership). `on`/`off`/`toggle` act on `--target` (default
@@ -391,4 +419,8 @@ user-edited file read at launch — there is no control command for it.
 `unsupported image (PNG or JPEG only)` / `no such image file` / `image path must not contain control characters` / `invalid background mode` (session background),
 `invalid sidebar mode` (sidebar), `invalid focus mode` (workspace focus),
 `no open window` (quick/sidebar), `window not open`
-(resize/move/`--window`), `unknown theme: <name>` (theme set), `unknown sound: <name>` (session status --sound). Unknown commands fail to decode and return a structured error, never a crash.
+(resize/move/`--window`), `unknown theme: <name>` (theme set), `unknown sound: <name>` (session status --sound),
+`invalid color (expected #rrggbb)` (session status --color),
+`--pane must be left, right, or scratch` (the `--pane` value check — the `agtermctl` CLI rejects a bad pane
+with this for session status/type/text, and over the raw socket `session.status` returns this same string;
+`session.type`/`session.text` over the raw socket instead return `invalid pane: <value>`). Unknown commands fail to decode and return a structured error, never a crash.

@@ -340,82 +340,15 @@ final class ControlServer {
             return response
         }
         switch request.cmd {
-        case .tree, .sessionNew, .sessionMove, .workspaceMove, .workspaceFocus, .sessionSplit,
-                .sessionScratch, .sessionFocus, .sessionResize, .sessionStatus, .sessionFlag,
-                .notify, .fontInc, .fontDec, .fontReset, .keymapReload, .configReload,
-                .themeSet, .themeList, .sidebar, .sidebarMode, .sidebarExpand, .sidebarCollapse,
-                .sessionType, .sessionCopy, .sessionOverlayOpen, .sessionOverlayClose, .sessionOverlayResult:
+        case .tree, .sessionNew, .sessionSelect, .sessionGo, .sessionClose, .sessionRename,
+                .workspaceNew, .workspaceSelect, .workspaceRename, .workspaceDelete,
+                .sessionMove, .workspaceMove, .workspaceFocus, .sessionSplit, .sessionScratch,
+                .sessionFocus, .sessionResize, .sessionStatus, .sessionFlag, .notify,
+                .fontInc, .fontDec, .fontReset, .keymapReload, .configReload, .themeSet, .themeList,
+                .sidebar, .sidebarMode, .sidebarExpand, .sidebarCollapse, .sessionType, .sessionCopy,
+                .sessionOverlayOpen, .sessionOverlayClose, .sessionOverlayResult, .sessionBackground,
+                .sessionText, .windowRename, .windowResize, .windowMove, .windowZoom, .restoreClear:
             return ControlResponse(ok: false, error: "control dispatcher did not handle \(request.cmd.rawValue)")
-        case .sessionSelect:
-            return resolver.resolveSession(request.target, window: request.args?.window) { store, id in
-                store.selectSession(id)
-                return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
-            }
-        case .sessionGo:
-            // relative navigation acts on the store's current selection, so no session target — just
-            // the frontmost-or-`--window` store. unknown/missing `to` is a structured error.
-            guard let dir = (request.args?.to).flatMap(SessionNavigation.init(wire:)) else {
-                return ControlResponse(ok: false, error: "session.go requires --to next|prev|first|last|next-attention|prev-attention")
-            }
-            return resolver.resolvePlacementStore(request.args?.window) { store in
-                store.navigateSession(dir)
-                guard let id = store.selectedSessionID else {
-                    return ControlResponse(ok: false, error: "no session to navigate")
-                }
-                return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
-            }
-        case .workspaceSelect:
-            // selecting a workspace selects its first session (workspace rows are not selectable on
-            // their own); an empty workspace just clears nothing and reports the workspace id.
-            return resolver.resolveWorkspace(request.target, window: request.args?.window) { store, id in
-                if let first = store.workspaces.first(where: { $0.id == id })?.sessions.first {
-                    store.selectSession(first.id)
-                }
-                return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
-            }
-        case .workspaceNew:
-            // placement target: the window's frontmost store (or `args.window`'s). name defaults to
-            // the auto-generated workspace name when none is given.
-            return resolver.resolvePlacementStore(request.args?.window) { store in
-                let name = trimmed(request.args?.name) ?? store.defaultWorkspaceName
-                let workspace = store.addWorkspace(name: name)
-                return ControlResponse(ok: true, result: ControlResult(id: workspace.id.uuidString))
-            }
-        case .workspaceRename:
-            guard let name = trimmed(request.args?.name) else {
-                return ControlResponse(ok: false, error: "workspace.rename requires a name")
-            }
-            return resolver.resolveWorkspace(request.target, window: request.args?.window) { store, id in
-                store.renameWorkspace(id, to: name)
-                return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
-            }
-        case .workspaceDelete:
-            // honors keep-at-least-one; returns an error rather than the GUI confirm alert.
-            return resolver.resolveWorkspace(request.target, window: request.args?.window) { store, id in
-                guard store.canRemoveWorkspace else {
-                    return ControlResponse(ok: false, error: "cannot delete last workspace")
-                }
-                store.removeWorkspace(id)
-                return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
-            }
-        case .sessionClose:
-            return resolver.resolveSession(request.target, window: request.args?.window) { store, id in
-                store.closeSession(id)
-                return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
-            }
-        case .sessionRename:
-            guard let name = request.args?.name else {
-                return ControlResponse(ok: false, error: "session.rename requires a name")
-            }
-            return resolver.resolveSession(request.target, window: request.args?.window) { store, id in
-                store.renameSession(id, to: name)
-                return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
-            }
-        case .sessionBackground:
-            return setBackground(request.target, request.args)
-        case .sessionText:
-            return readText(request.target, window: request.args?.window, pane: request.args?.pane,
-                            all: request.args?.all ?? false, lines: request.args?.lines)
         case .sessionSearch:
             // resolve first (cross-window when no `args.window`), then select + realize the surface; the
             // realize path is async (bounded poll), so this can't go through the synchronous
@@ -436,18 +369,8 @@ final class ControlServer {
             return await windowSelect(request.target)
         case .windowClose:
             return await windowClose(request.target)
-        case .windowRename:
-            return windowRename(request.target, name: request.args?.name)
         case .windowDelete:
             return windowDelete(request.target)
-        case .windowResize:
-            return windowResize(request.target, width: request.args?.width, height: request.args?.height)
-        case .windowMove:
-            return windowMove(request.target, x: request.args?.x, y: request.args?.y, display: request.args?.display)
-        case .windowZoom:
-            return windowZoom(request.target)
-        case .restoreClear:
-            return clearSavedCommands()
         }
     }
 
@@ -456,7 +379,7 @@ final class ControlServer {
     /// (consumed at restore); the SAVE is what wipes the on-disk copy from the last quit, also closing
     /// the force-quit re-fire window. Drives `restore.clear` / `agtermctl restore clear`. App-global like
     /// `keymap.reload` (no `--window` selector — it clears every open window).
-    private func clearSavedCommands() -> ControlResponse {
+    func clearRestoreCommands() -> ControlResponse {
         for session in library.allOpenSessions() {
             session.foregroundCommand = nil
             session.splitForegroundCommand = nil
@@ -486,12 +409,13 @@ final class ControlServer {
     /// Creates a session in `workspaceID` of `store` with the `session.new` args (cwd default $HOME,
     /// optional command/name), focuses it when it lands in the frontmost window (so a keymap `session new`
     /// opens focused like the GUI New Session; a background `--window` target keeps focus), and returns the
-    /// new id. Shared by the id- and name-addressed paths of the `.sessionNew` arm.
+    /// new id. Shared by the id- and name-addressed paths of the `.sessionNew` arm. `at` is the anchor-relative
+    /// insertion slot for `--after`/`--before` (clamped in `AppStore`); nil appends.
     func makeSessionResponse(in store: AppStore, workspaceID: UUID,
-                             options: ControlSessionCreateOptions) -> ControlResponse {
+                             options: ControlSessionCreateOptions, at index: Int? = nil) -> ControlResponse {
         let cwd = options.cwd ?? FileManager.default.homeDirectoryForCurrentUser.path
         guard let session = store.addSession(toWorkspace: workspaceID, cwd: cwd,
-                                             command: options.command, name: options.name) else {
+                                             command: options.command, name: options.name, at: index) else {
             return ControlResponse(ok: false, error: "could not create session")
         }
         if store === library.activeStore { actions.focusActiveSession() }

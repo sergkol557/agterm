@@ -99,21 +99,28 @@ Run `agtermctl <area> <cmd> --help` for exact flags. Full detail in **reference.
 **tree** — print the workspace/session tree (`--json` for structured). Each session node carries
 `foreground`/`splitForeground` (the live argv of each pane's foreground process, omitted when the pane
 is at its shell prompt) — i.e. what each pane is currently running — `status` (the agent-status set
-via `session status`: `active`|`completed`|`blocked`, omitted when idle), and `background` (the background
+via `session status`: `active`|`completed`|`blocked`, omitted when idle), `statusPane` (which pane set
+that status: `left` (main) | `right` (split) | `scratch`, from `session status --pane`, omitted when
+unset or idle), and `background` (the background
 spec — image/text watermark or solid color — set via `session background`, omitted when none — the read side of set/clear).
 
 **workspace** — `new [name]` · `rename <name>` · `delete` · `select` · `move --to up|down|top|bottom` ·
 `focus [on|off|toggle]` (collapse the sidebar tree to a single workspace).
 
 **session**
-- `new [--cwd DIR] [--workspace W] [--workspace-name NAME] [--create-workspace] [--command CMD] [--name NAME]` —
+- `new [--cwd DIR] [--workspace W] [--workspace-name NAME] [--create-workspace] [--command CMD] [--name NAME] [--after SID | --before SID]` —
   create (and focus) a session. Target the workspace by id/prefix (`--workspace`) OR by name
   (`--workspace-name`, mutually exclusive); add `--create-workspace` to reuse-or-create the named
   workspace when absent. `--command` runs that program as the session process instead of a login shell;
-  `--name` seeds the sidebar label (default: the auto basename).
+  `--name` seeds the sidebar label (default: the auto basename). `--after`/`--before` place it directly
+  after/before an anchor session (id/prefix/`active`) instead of appending — the anchor carries its own
+  workspace, so it's mutually exclusive with `--workspace`/`--workspace-name`. `new --after active` =
+  create right after the current session.
 - `close` · `select` · `rename <name>`.
 - `go --to next|prev|first|last|next-attention|prev-attention` — move the selection between sessions.
-- `move <workspace>` (relocate) or `move --to up|down|top|bottom` (reorder within the workspace).
+- `move <workspace>` (relocate) or `move --to up|down|top|bottom` (reorder within the workspace) or
+  `move --after SID | --before SID` (place after/before an anchor session; the anchor carries its own
+  workspace, so this relocates + positions in one shot, even cross-workspace).
 - `type <text> [--stdin] [--select] [--pane left|right|scratch]` — inject keystrokes (real typing, Enter
   included) into the main pane, the split pane with `--pane right`, or the scratch terminal (even hidden)
   with `--pane scratch`.
@@ -131,7 +138,7 @@ spec — image/text watermark or solid color — set via `session background`, o
   equivalent — bind it via a `command "agtermctl session resize …"` custom action). `--split-ratio` sets
   the absolute left-pane fraction (0..1, clamped to 0.05..0.95); `--grow-left`/`--grow-right` nudge it by
   a fraction. Prints the applied (clamped) fraction.
-- `status <idle|active|completed|blocked> [--blink] [--auto-reset] [--sound NAME]` — set the sidebar agent glyph (`--sound default` or a system sound name plays a one-shot sound).
+- `status <idle|active|completed|blocked> [--blink] [--auto-reset] [--sound NAME] [--color #rrggbb] [--pane left|right|scratch]` — set the sidebar agent glyph (`--sound default` or a system sound name plays a one-shot sound; `--color` tints the glyph for this call only, reverting on the next status set without it; `--pane` records which pane set it — `left`=main, `right`=split, `scratch` — so foreground typing in another pane won't clear it and any user-initiated GUI selection (auto-follow, attention-nav ⌃⌥↑/↓, plain session nav, the command palettes, a sidebar row click) reveals the blocking pane, read back as the tree `statusPane` field; the socket `session go next-attention` only steps the selection, it does not itself reveal the pane).
 - `flag [on|off|toggle|clear]` — flag a session for the flagged working-set view (`clear` unflags all).
 - `background image <path> [--opacity F] [--fit contain|cover|stretch|none] [--position P] [--repeat]` ·
   `background text <text> [--color #rrggbb] [--opacity F] [--fit ...] [--position ...]` ·
