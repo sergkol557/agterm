@@ -328,6 +328,12 @@ paths:
   This is NOT the overlay's path — `makeOverlaySurface` explicitly wraps its command in `sh -c '…'` (so
   the overlay DOES get shell semantics); a session `--command` that needs shell features must wrap ITSELF,
   e.g. `--command "sh -c '…'"`.
+  Either way the command runs under the app's GUI environment, whose `PATH` is the launchd default (no
+  `/opt/homebrew/bin`), NOT a login shell's PATH, so a bare Homebrew or other non-default binary is not
+  found and exits 127 — the session/overlay opens then vanishes and `session.overlay.result` reports 127.
+  The fix is an absolute path or a LOGIN-shell wrapper (`zsh -lc '…'`); a plain `sh -c` gets shell
+  operators but NOT the login PATH, so the overlay's built-in `sh -c` wrapper does not by itself solve it
+  (the bundled agent-skill documents this caveat on the three `--command`/overlay entries).
   Keep-in-sync: the `.sessionNew` case carries `ControlArgs.command` plus `ControlArgs.name` (custom
   name) and `ControlArgs.workspaceName` + `ControlArgs.createWorkspace` (name-addressing + ensure);
   the arm pre-validates the mutual-exclusion / create-needs-name rules and shares `makeSessionResponse`

@@ -42,8 +42,8 @@ holds the pane the shortcut fired from, so `session type --pane "$AGT_PANE"` typ
 Run a command AS the session's process (closes when it exits, no echoed command line):
 
 ```bash
-agtermctl session new --command "htop"
-agtermctl session new --command "ssh host -p 22"   # argv-split (quotes respected), no shell, no echo
+agtermctl session new --command "ssh host -p 22"     # a default-PATH binary: argv-split (quotes respected), no shell, no echo
+agtermctl session new --command "zsh -lc 'htop'"     # Homebrew/non-default binary: --command has the app's GUI PATH, so wrap in a login shell (or use an absolute path); bare "htop" exits 127
 ```
 
 Create a session pre-named (label set at creation, no follow-up rename):
@@ -129,10 +129,12 @@ echo "exit status: $?"
 cat /tmp/notes.md
 ```
 
-Floating panel variant (session stays visible behind it):
+Floating panel variant (session stays visible behind it). Note: a floating overlay renders only over the
+active session, so opening it on a background `--target` SWITCHES the user to that session — use a full
+overlay (no `--size-percent`) when you must not disturb the user's current view:
 
 ```bash
-agtermctl session overlay open "htop" --target "$AGTERM_SESSION_ID" --size-percent 70   # this session
+agtermctl session overlay open "zsh -lc 'htop'" --target "$AGTERM_SESSION_ID" --size-percent 70   # login shell so Homebrew's htop is on PATH; bare "htop" flashes open then vanishes (exit 127)
 # tint the overlay pane so it stands out from the session behind it:
 agtermctl session overlay open "revdiff HEAD~3" --target "$AGTERM_SESSION_ID" --size-percent 80 --background-color "#2a1a3a"
 # ... later
@@ -205,7 +207,7 @@ A third per-session full-coverage shell. Hide keeps it alive; `exit` in it recre
 agtermctl session scratch on        # show (selects the target)
 agtermctl session scratch off       # hide, shell stays alive
 agtermctl session scratch toggle
-agtermctl session scratch on --command "lazygit"   # run a program instead of a shell (run-once)
+agtermctl session scratch on --command "zsh -lc 'lazygit'"   # run a program instead of a shell (run-once); login-shell wrap so Homebrew's PATH is found (bare "lazygit" exits 127)
 ```
 
 ## Flag a working set and view just the flagged sessions
