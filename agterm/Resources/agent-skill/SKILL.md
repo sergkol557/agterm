@@ -91,6 +91,12 @@ a global `--window <id|prefix|active>` to operate on a specific window's tree (d
 
 Scripts rarely type ids: create with `*.new` (capture the returned id), or act on `active`.
 
+**Agents: `active` is almost never your own session.** `active` is the session the USER has selected in
+the GUI; your shell runs in `$AGTERM_SESSION_ID`, and the user is usually on a different session while
+you work. For any session-scoped command meant to act on *this* session — `overlay open`, `scratch`,
+`type`, `text`, `background`, `status`, `copy`, … — pass `--target "$AGTERM_SESSION_ID"`. Omit it and
+you open overlays / type into whatever the user has selected, not your own session.
+
 ## Command summary (50 commands)
 
 Run `agtermctl <area> <cmd> --help` for exact flags. Full detail in **reference.md**; recipes in
@@ -111,7 +117,9 @@ spec — image/text watermark or solid color — set via `session background`, o
 - `new [--cwd DIR] [--workspace W] [--workspace-name NAME] [--create-workspace] [--command CMD] [--name NAME] [--after SID | --before SID]` —
   create (and focus) a session. Target the workspace by id/prefix (`--workspace`) OR by name
   (`--workspace-name`, mutually exclusive); add `--create-workspace` to reuse-or-create the named
-  workspace when absent. `--command` runs that program as the session process instead of a login shell;
+  workspace when absent. `--command` runs that program as the session process instead of a login shell
+  (argv-only, and with the app's GUI `PATH` — a Homebrew/non-default binary needs an absolute path or a
+  `zsh -lc '…'` wrapper, else exit 127; same caveat for `scratch --command` and `overlay open` below);
   `--name` seeds the sidebar label (default: the auto basename). `--after`/`--before` place it directly
   after/before an anchor session (id/prefix/`active`) instead of appending — the anchor carries its own
   workspace, so it's mutually exclusive with `--workspace`/`--workspace-name`. `new --after active` =
@@ -123,7 +131,8 @@ spec — image/text watermark or solid color — set via `session background`, o
   workspace, so this relocates + positions in one shot, even cross-workspace).
 - `type <text> [--stdin] [--select] [--pane left|right|scratch]` — inject keystrokes (real typing, Enter
   included) into the main pane, the split pane with `--pane right`, or the scratch terminal (even hidden)
-  with `--pane scratch`.
+  with `--pane scratch`. Pass `--target "$AGTERM_SESSION_ID"` to type into YOUR session, not the user's
+  active one (see Addressing).
 - `copy` — print the session's selected text (does NOT touch the system clipboard).
 - `text [--all] [--lines N] [--pane left|right|scratch]` — print the session buffer as plain text. Default
   is the visible screen of the focused pane; `--pane scratch` reads the scratch terminal even while hidden;
@@ -132,7 +141,8 @@ spec — image/text watermark or solid color — set via `session background`, o
 - `split [on|off|toggle]` — side-by-side second shell (hide keeps it alive).
 - `scratch [on|off|toggle] [--command CMD]` — full-coverage third shell (hide keeps it alive; `exit`
   recreates). `--command` (when showing) runs a program instead of a shell, run-once like `session new
-  --command` (respawns the scratch if one is open).
+  --command` (respawns the scratch if one is open). Target your own session with
+  `--target "$AGTERM_SESSION_ID"` (see Addressing).
 - `focus [left|right|other]` — move focus between split panes.
 - `resize --split-ratio R | --grow-left D | --grow-right D` — move the split divider (no GUI/keymap
   equivalent — bind it via a `command "agtermctl session resize …"` custom action). `--split-ratio` sets
@@ -147,9 +157,15 @@ spec — image/text watermark or solid color — set via `session background`, o
   terminal background color. Per session; survives restart. `--opacity` 0.0–1.0. (An image/text watermark
   renders the pane opaque, overriding window translucency, so it shows; a `color` takes no opacity and
   honors the Settings window translucency instead.)
-- `overlay open <command> [--cwd DIR] [--wait] [--block] [--size-percent N] [--background-color #rrggbb]` ·
+- `overlay open <command> [--cwd DIR] [--wait] [--block] [--size-percent N] [--background-color #rrggbb] [--follow]` ·
   `overlay close` ·
   `overlay result` — run a program on top of a session; `--block` waits and exits with its status.
+  Target with `--target "$AGTERM_SESSION_ID"` for YOUR session (default `active` is the user's selection).
+  **By default `overlay open` does NOT switch the user** — full and floating (`--size-percent`) both open
+  on `--target` and run their program in the background; the panel appears when the user visits that
+  session. **Pass `--follow` to select the target after opening** (a no-op if it is already active): use
+  `--follow` when you want the user pulled to the overlay, omit it to open quietly on your own or another
+  session.
   `--background-color` gives the overlay pane its own solid color, independent of the session's. An
   overlay is a real terminal (pty), which is also how you **display an image inline** — via the bundled
   `scripts/show-image.sh` (see below).

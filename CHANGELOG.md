@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.8.2 - 2026-07-05
+
+### Bug Fixes
+
+- microphone access for command-line tools running inside agterm now works: a hardened-runtime app also needs the audio-input entitlement, not just the usage description added in v0.8.1 @umputun
+
+## v0.8.1 - 2026-07-05
+
+### Bug Fixes
+
+- declare a microphone usage description so command-line tools running inside an agterm terminal can request microphone access #143 @umputun
+
+## v0.8.0 - 2026-07-05
+
+### New Features
+
+- unify overlay behavior: floating (in-deck) overlays now act like full-screen ones, opening in the background without switching the active session, plus a new --follow flag to switch to the target as the overlay opens #139 @umputun
+- place a new session directly after or before another with session new --after/--before (and session move), instead of walking it up with repeated moves #134 @olomix
+- persist workspace expand/collapse state across relaunch #133 @umputun
+
+### Improvements
+
+- continue routing control commands through the host-free dispatcher: the remaining commands and window controls now dispatch in agtermCore #137 #132 @melonamin
+- link the About panel to agterm.com instead of the GitHub repo @umputun
+
 ## v0.7.1 - 2026-07-04
 
 ### Improvements

@@ -22,6 +22,12 @@ Full detail for every `agtermctl` command. See `SKILL.md` for the model and addr
 - `--target` defaults to `active` (the selected session / current workspace). Accepts a full UUID
   (case-insensitive) or a unique prefix. Zero matches → `notFound`; ambiguous prefix → `ambiguous`
   (the error lists candidates).
+- **For an agent, `active` is the USER's GUI-selected session, not yours.** Your shell is
+  `$AGTERM_SESSION_ID`; the user is usually on a different session while you work. Pass
+  `--target "$AGTERM_SESSION_ID"` on any session-scoped command (`overlay open`, `scratch`, `type`,
+  `text`, `background`, `status`, `copy`, …) that must act on the session you run in — otherwise it hits
+  whatever the user has selected. `overlay open` opens in the background without switching the user
+  (both full and floating); pass `--follow` to additionally SELECT the target, switching the user to it.
 - `--window <id|prefix|active>` (on session/workspace/tree/font/notify commands) picks which window's
   tree to act on; default is the frontmost. With `--window` set, that window must be open. Without it,
   an id/prefix session target is matched across all open windows.
@@ -78,7 +84,10 @@ state; there is no control command to set them.
   existing one or creates it when absent (idempotent). `--command` runs that command as the session's
   process instead of the login shell (no echoed command line; the session closes when the command
   exits). It runs argv-style (tokenized, quotes respected, but NO shell), so shell operators (`;`,
-  `&&`, `$VAR`, redirects, globs) are not interpreted — wrap them yourself: `--command "sh -c '…'"`.
+  `&&`, `$VAR`, redirects, globs) are not interpreted, and it inherits the app's GUI `PATH` (the launchd
+  default — no `/opt/homebrew/bin`), so a bare Homebrew or other non-default binary fails with exit 127.
+  Wrap in a login shell for both — `--command "zsh -lc 'htop'"` — or give an absolute path
+  (`/opt/homebrew/bin/htop`).
   The command is persisted (`SessionSnapshot.initialCommand`) and re-runs on restore when **Restore
   running commands on restart** is on (default off → a restored session is a plain shell); a live
   captured foreground takes precedence over it. `--name`
@@ -147,8 +156,9 @@ state; there is no control command to set them.
   shell that renders like a full overlay but behaves like the split. `off` hides it keep-alive; typing
   `exit` in it closes it and the next `on` spawns a fresh shell. `on` selects the target first (the
   scratch is full-coverage and owns focus). `--command` (only when showing) runs that program as the
-  scratch's process instead of a login shell — argv-style (no shell; wrap operators yourself as
-  `"sh -c '…'"`) and RUN-ONCE like `session new --command` (after it exits, the next `on` is a plain
+  scratch's process instead of a login shell — argv-style (no shell, and inheriting the app's GUI
+  `PATH`, so the same exit-127 caveat as `session new --command`: wrap in `"zsh -lc '…'"` or use an
+  absolute path) and RUN-ONCE like `session new --command` (after it exits, the next `on` is a plain
   shell). A scratch is expendable, so passing `--command` while one is already open respawns it. Not
   persisted. Unknown mode errors. The tree's `scratch` flag tracks visibility.
 - `session focus [left|right|other] [--target] [--window W]` — move keyboard focus between the two
@@ -214,10 +224,17 @@ state; there is no control command to set them.
   background-opacity); a `color` instead honors the Settings window translucency. Read the current
   background back from a session's `background` field in `tree --json` (a `{kind, colorHex, …}` object,
   omitted when none).
-- `session overlay open <command> [--cwd DIR] [--wait] [--block] [--size-percent N] [--background-color #rrggbb] [--target] [--window W]`
+- `session overlay open <command> [--cwd DIR] [--wait] [--block] [--size-percent N] [--background-color #rrggbb] [--follow] [--target] [--window W]`
   — run `command` in an ephemeral terminal on top of the session; it closes when the command exits.
+  `command` runs through `sh -c` (so shell operators DO work here) but with the app's GUI `PATH` (no
+  `/opt/homebrew/bin`), so a bare Homebrew or other non-default binary fails with exit 127 — the overlay
+  flashes open then vanishes and `overlay result` reports 127; give an absolute path or wrap in
+  `"zsh -lc '…'"`.
   Full-size by default (hides the session); `--size-percent N` (1–100) makes it a floating framed panel
-  with the session visible behind. `--background-color #rrggbb` gives the overlay pane its own solid
+  with the session visible behind. **By default the overlay does NOT switch the active session** — full
+  and floating both open on `--target` and run their program in the background, appearing when the user
+  visits that session. **Pass `--follow` to select the target after opening** (a no-op if it is already
+  active); use it when you want the user pulled to the overlay, omit it to open quietly. `--background-color #rrggbb` gives the overlay pane its own solid
   background color, independent of the session's own `session background color` (nil = the default theme
   background); it honors the Settings window translucency, captured when the overlay opens. `--wait` keeps the overlay open after the command exits (press a key
   to close). `--block` waits for the command to exit and makes agtermctl exit with the command's status
