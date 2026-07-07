@@ -227,6 +227,13 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
     /// owns the cursor-rect override and `applyMouseShape`) can read it.
     var mouseShape: ghostty_action_mouse_shape_e = GHOSTTY_MOUSE_SHAPE_TEXT
 
+    /// The last pointer position pushed to libghostty via `ghostty_surface_mouse_pos` (view-flipped
+    /// coordinates), or nil before the first report. `scrollWheel` syncs the position only when the current
+    /// point differs from this, so a normal already-synced scroll doesn't re-push the same cell on every
+    /// packet — which in an any-motion + sgr-pixel mouse-reporting TUI would emit a synthetic motion report
+    /// per packet. Not `private` so the `+Input` extension (which owns the mouse handlers) can read/write it.
+    var lastReportedMousePoint: NSPoint?
+
     init(workingDirectory: String, fontSize: Float? = nil, command: String? = nil, initialInput: String? = nil,
          waitAfterCommand: Bool = false, autoFocus: Bool = false, env: [String: String] = [:]) {
         self.workingDirectory = workingDirectory
@@ -249,11 +256,33 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
     private func observeKeyWindowChanges() {
         let center = NotificationCenter.default
         for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+            let becameKey = name == NSWindow.didBecomeKeyNotification
             let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.updateGhosttyFocus() }
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.updateGhosttyFocus()
+                    // returning focus to agterm (cmd-tab or a reactivating click) while this pane is the
+                    // one on screen counts as "seeing" the session — clear its unseen badge, the same as a
+                    // focus transition does. becomeFirstResponder can't cover this: AppKit's per-window
+                    // first responder never resigned while agterm was backgrounded, so no focus transition
+                    // fires on return, leaving the badge stuck until you switch sessions and back.
+                    if becameKey { self.clearUnseenOnRefocus() }
+                }
             }
             focusObservers.append(token)
         }
+    }
+
+    /// Clear the "you've seen it" state (unseen badge + delivered banners) for this pane's session when
+    /// agterm regains key focus on it — the inverse of notification suppression (which drops a banner only
+    /// when the firing pane is the key window's first responder AND the app is active). `liveFocus` already
+    /// encodes both: a window is key only while the app is active, so it fires solely for the focused pane of
+    /// the now-key window, never a background one. Reuses `onFocusChange`, so it clears exactly for the
+    /// main/split panes that already clear on a focus transition (a scratch/overlay has no `onFocusChange`
+    /// and doesn't clear on focus either), and no-ops after teardown (the closure is nil'd).
+    private func clearUnseenOnRefocus() {
+        guard liveFocus else { return }
+        onFocusChange?(true)
     }
 
     /// The cursor-focus state to report to libghostty: solid only when this surface is the first responder
@@ -866,6 +895,18 @@ final class GhosttySurfaceView: NSView, TerminalSurface {
     // MARK: - First responder
 
     override var acceptsFirstResponder: Bool { true }
+
+    /// Deliver the LEFT click that reactivates a background/inactive window straight to the surface (a
+    /// "first mouse") instead of AppKit swallowing it just to raise the window. Without this, clicking a
+    /// specific pane of a two-pane split from another window raises the window but never runs `mouseDown`,
+    /// so the clicked pane doesn't become first responder and `splitFocused` stays on the previously-focused
+    /// pane ("the mouse works but the pane isn't selected"). The left click then behaves like any normal
+    /// in-window click — it selects the pane AND is reported to the program — matching Terminal.app/iTerm2/Ghostty.
+    /// Gated to `.leftMouseDown` on purpose: a first-mouse right/middle click would otherwise reach
+    /// `rightMouseDown`/`otherMouseDown`, which forward to libghostty, and with the default
+    /// `right-click-action = paste` that would paste the clipboard into a window you only meant to raise —
+    /// so right/middle first clicks just raise the window.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { event?.type == .leftMouseDown }
 
     override func becomeFirstResponder() -> Bool {
         let result = super.becomeFirstResponder()

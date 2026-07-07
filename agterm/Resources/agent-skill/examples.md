@@ -138,6 +138,9 @@ agtermctl session overlay open "zsh -lc 'htop'" --target "$AGTERM_SESSION_ID" --
 agtermctl session overlay open "revdiff HEAD~3" --target "$AGTERM_SESSION_ID" --size-percent 80 --background-color "#2a1a3a"
 # switch the user to the target as it opens:
 agtermctl session overlay open "revdiff HEAD~3" --target "$AGTERM_SESSION_ID" --size-percent 80 --follow
+# resize the open overlay in place (the program keeps running): shrink to a floating panel, then back to full
+agtermctl session overlay resize --size-percent 60 --target "$AGTERM_SESSION_ID"
+agtermctl session overlay resize --full --target "$AGTERM_SESSION_ID"
 # ... later
 agtermctl session overlay close
 ```
@@ -223,6 +226,19 @@ agtermctl sidebar mode flagged                            # show only the flagge
 agtermctl session go --to next                            # in flagged mode, nav steps the flagged set only
 agtermctl sidebar mode tree                               # back to the full tree
 agtermctl session flag clear                              # unflag everything in the window
+```
+
+## Acknowledge a driven session's notifications without stealing focus
+
+An orchestrator relaying a session's output elsewhere (Telegram, another agent) fires `notify` to signal
+"your turn", which raises the session's red unseen badge. Nothing normally clears that badge except
+visiting the session — which pulls the selection to it. `session seen` clears it in place, so the badge
+stays a real attention signal on the sessions a human tends while the driven ones stay clean.
+
+```bash
+agtermctl notify "your turn" --target "$SID"             # raises the unseen badge (body is positional)
+agtermctl tree --json | jq '.result.tree.workspaces[].sessions[] | {id, unseen}'  # read the counts
+agtermctl session seen --target "$SID"                   # clear it, selection/focus unchanged
 ```
 
 ## Focus a single workspace
@@ -349,6 +365,7 @@ w=$(agtermctl window new "scratch" --json | jq -r '.result.id')
 agtermctl window resize "$w" --width 1200 --height 800
 agtermctl window move "$w" --x 100 --y 100 --display 0
 agtermctl window zoom "$w"                 # maximize-to-screen toggle (call again to restore)
+agtermctl window fullscreen "$w"           # native macOS full screen toggle (⌃⌘F / green button)
 agtermctl window select "$w"
 ```
 

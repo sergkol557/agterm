@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.8.4 - 2026-07-06
+
+### Bug Fixes
+
+- hiding or showing the sidebar is now instant on windows with many sessions, instead of lagging as every terminal pane re-rendered 9440f1a @umputun
+
+## v0.8.3 - 2026-07-06
+
+### Improvements
+
+- session.seen control command to clear a session's unseen-notification badge headlessly, without opening it #156 @umputun
+
+### Bug Fixes
+
+- mouse-wheel scroll and split-pane selection now work right after clicking back into an inactive window, instead of needing a mouse nudge #157 @umputun
+- keep the sidebar disclosure triangle visible when the theme and system appearance mismatch #152 @umputun
+- show the chrome hairlines on light themes #150 @umputun
+- the selected-session label is now readable on light themes #146 @bigspawn
+
 ## v0.8.2 - 2026-07-05
 
 ### Bug Fixes

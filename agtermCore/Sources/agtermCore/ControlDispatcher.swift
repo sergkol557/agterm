@@ -19,6 +19,7 @@ public protocol ControlActions {
     func moveWorkspace(_ target: String?, window: String?, direction: ReorderDirection) -> ControlResponse
     func focusWorkspace(_ target: String?, window: String?, mode: String?) -> ControlResponse
     func setSessionFlag(_ target: String?, window: String?, mode: String?) -> ControlResponse
+    func markSessionSeen(_ target: String?, window: String?) -> ControlResponse
     func setSessionStatus(_ target: String?, window: String?, update: ControlSessionStatusUpdate) -> ControlResponse
     func splitSession(_ target: String?, window: String?, mode: String?) -> ControlResponse
     func scratchSession(_ target: String?, window: String?, mode: String?, command: String?) -> ControlResponse
@@ -42,6 +43,7 @@ public protocol ControlActions {
     func openSessionOverlay(_ target: String?, window: String?,
                             options: ControlSessionOverlayOpenOptions) -> ControlResponse
     func closeSessionOverlay(_ target: String?, window: String?) -> ControlResponse
+    func resizeSessionOverlay(_ target: String?, window: String?, sizePercent: Int?) -> ControlResponse
     func sessionOverlayResult(_ target: String?, window: String?) -> ControlResponse
     func setSessionBackground(_ target: String?, window: String?,
                               options: ControlSessionBackgroundOptions) -> ControlResponse
@@ -55,6 +57,7 @@ public protocol ControlActions {
     func windowResize(_ target: String?, width: Int, height: Int) -> ControlResponse
     func windowMove(_ target: String?, x: Int, y: Int, display: Int?) -> ControlResponse
     func windowZoom(_ target: String?) -> ControlResponse
+    func windowFullscreen(_ target: String?) -> ControlResponse
     func clearRestoreCommands() -> ControlResponse
 }
 
@@ -124,11 +127,11 @@ public struct ControlDispatcher {
         case .tree:
             return actions.controlTree(window: request.args?.window)
         case .sessionNew, .sessionSelect, .sessionGo, .sessionClose, .sessionRename,
-                .sessionMove, .sessionFlag, .sessionStatus:
+                .sessionMove, .sessionFlag, .sessionSeen, .sessionStatus:
             return dispatchSessionCommand(request)
         case .sessionSplit, .sessionScratch, .sessionFocus, .sessionResize, .sessionType,
                 .sessionCopy, .sessionSearch, .sessionOverlayOpen, .sessionOverlayClose,
-                .sessionOverlayResult, .sessionBackground, .sessionText:
+                .sessionOverlayResize, .sessionOverlayResult, .sessionBackground, .sessionText:
             return await dispatchSessionSurfaceCommand(request)
         case .workspaceNew, .workspaceSelect, .workspaceRename, .workspaceDelete,
                 .workspaceMove, .workspaceFocus:
@@ -138,7 +141,7 @@ public struct ControlDispatcher {
                 .sidebarCollapse, .restoreClear:
             return dispatchAppCommand(request)
         case .windowNew, .windowList, .windowSelect, .windowClose, .windowRename,
-                .windowDelete, .windowResize, .windowMove, .windowZoom:
+                .windowDelete, .windowResize, .windowMove, .windowZoom, .windowFullscreen:
             return await dispatchWindowCommand(request)
         }
     }
@@ -218,6 +221,8 @@ public struct ControlDispatcher {
             return actions.moveSession(request.target, window: args?.window, move: .workspace(workspace))
         case .sessionFlag:
             return actions.setSessionFlag(request.target, window: request.args?.window, mode: request.args?.mode)
+        case .sessionSeen:
+            return actions.markSessionSeen(request.target, window: request.args?.window)
         case .sessionStatus:
             guard let status = AgentStatus(rawValue: request.args?.status ?? "") else {
                 return ControlResponse(ok: false, error: "invalid status")
@@ -322,6 +327,20 @@ public struct ControlDispatcher {
                                               ))
         case .sessionOverlayClose:
             return actions.closeSessionOverlay(request.target, window: request.args?.window)
+        case .sessionOverlayResize:
+            let wantsFull = request.args?.full == true
+            let percent = request.args?.sizePercent
+            if wantsFull, percent != nil {
+                return ControlResponse(ok: false, error: "session.overlay.resize: --full is mutually exclusive with --size-percent")
+            }
+            if !wantsFull, percent == nil {
+                return ControlResponse(ok: false, error: "session.overlay.resize requires --size-percent or --full")
+            }
+            if let percent, !(1...100).contains(percent) {
+                return ControlResponse(ok: false, error: "session.overlay.resize: --size-percent must be 1...100")
+            }
+            return actions.resizeSessionOverlay(request.target, window: request.args?.window,
+                                                sizePercent: wantsFull ? nil : percent)
         case .sessionOverlayResult:
             return actions.sessionOverlayResult(request.target, window: request.args?.window)
         case .sessionBackground:
@@ -483,6 +502,8 @@ public struct ControlDispatcher {
             return actions.windowMove(request.target, x: x, y: y, display: request.args?.display)
         case .windowZoom:
             return actions.windowZoom(request.target)
+        case .windowFullscreen:
+            return actions.windowFullscreen(request.target)
         default:
             preconditionFailure("unexpected window command: \(request.cmd.rawValue)")
         }

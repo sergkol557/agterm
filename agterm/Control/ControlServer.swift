@@ -119,6 +119,14 @@ final class ControlServer {
         NotificationCenter.default.addObserver(forName: .agtermWindowFrontmostChanged, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshWindowCache() }
         }
+        // a GUI-only sidebar toggle (⌃⌘S / toolbar / menu / palette) mutates sidebarVisible without a
+        // control command, so refresh the cache on it too — otherwise window.list's sidebarVisible lags.
+        // queue nil (NOT .main) delivers synchronously on the posting thread: setSidebarVisible is
+        // @MainActor, so the refresh runs on the main actor BEFORE the toggle returns. An async .main hop
+        // would leave a window where a background window.list fast-path read still sees the stale cache.
+        NotificationCenter.default.addObserver(forName: .agtermSidebarVisibilityChanged, object: nil, queue: nil) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshWindowCache() }
+        }
     }
 
     /// The socket path the app and the CLI rendezvous on. `AGTERM_CONTROL_SOCKET` is an explicit override
@@ -343,13 +351,13 @@ final class ControlServer {
         case .tree, .sessionNew, .sessionSelect, .sessionGo, .sessionClose, .sessionRename,
                 .workspaceNew, .workspaceSelect, .workspaceRename, .workspaceDelete,
                 .sessionMove, .workspaceMove, .workspaceFocus, .sessionSplit, .sessionScratch,
-                .sessionFocus, .sessionResize, .sessionStatus, .sessionFlag, .notify,
+                .sessionFocus, .sessionResize, .sessionStatus, .sessionFlag, .sessionSeen, .notify,
                 .fontInc, .fontDec, .fontReset, .keymapReload, .configReload, .themeSet, .themeList,
                 .sidebar, .sidebarMode, .sidebarExpand, .sidebarCollapse, .sessionType, .sessionCopy,
-                .sessionSearch, .sessionOverlayOpen, .sessionOverlayClose, .sessionOverlayResult,
-                .sessionBackground, .sessionText, .quick, .windowNew, .windowList, .windowSelect,
+                .sessionSearch, .sessionOverlayOpen, .sessionOverlayClose, .sessionOverlayResize,
+                .sessionOverlayResult, .sessionBackground, .sessionText, .quick, .windowNew, .windowList, .windowSelect,
                 .windowClose, .windowRename, .windowDelete, .windowResize, .windowMove, .windowZoom,
-                .restoreClear:
+                .windowFullscreen, .restoreClear:
             return ControlResponse(ok: false, error: "control dispatcher did not handle \(request.cmd.rawValue)")
         }
     }

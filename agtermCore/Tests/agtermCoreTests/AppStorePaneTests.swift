@@ -24,6 +24,21 @@ struct AppStorePaneTests {
         #expect(session.splitFocused == true)
     }
 
+    @Test func toggleSplitReshowPreservesFocusedPane() {
+        let store = makeStore()
+        let ws = store.addWorkspace(name: "work")
+        let session = store.addSession(toWorkspace: ws.id, cwd: "/a")!
+        store.toggleSplit(session.id)           // open a NEW split -> focuses the new (right) pane
+        #expect(session.splitFocused == true)
+        session.splitFocused = false            // focus the left pane
+        store.toggleSplit(session.id)           // hide (zoom): left pane stays the maximized one
+        #expect(session.isSplit == false)
+        #expect(session.splitFocused == false)
+        store.toggleSplit(session.id)           // re-show (un-zoom): must keep the left pane focused
+        #expect(session.isSplit == true)
+        #expect(session.splitFocused == false)  // regression guard: no jerk back to the right pane
+    }
+
     @Test func closeSplitHidesAndTearsDownSurface() {
         let store = makeStore()
         let ws = store.addWorkspace(name: "work")
@@ -276,6 +291,32 @@ struct AppStorePaneTests {
         store.closeOverlay(session.id)
         store.openOverlay(session.id, command: "htop", sizePercent: 1)
         #expect(session.overlaySizePercent == 1)
+    }
+
+    @Test func resizeOverlaySwitchesFullAndFloatingAndClamps() {
+        let store = makeStore()
+        let ws = store.addWorkspace(name: "work")
+        let session = store.addSession(toWorkspace: ws.id, cwd: "/a")!
+        // no overlay open → no-op, leaves size untouched.
+        #expect(store.resizeOverlay(session.id, sizePercent: 50) == false)
+        #expect(session.overlaySizePercent == nil)
+        // open full, then resize it to a floating percent (nil → 60).
+        store.openOverlay(session.id, command: "htop")
+        #expect(session.overlaySizePercent == nil)
+        #expect(store.resizeOverlay(session.id, sizePercent: 60) == true)
+        #expect(session.overlaySizePercent == 60)
+        #expect(session.floatingOverlayActive)
+        // resize back to full (nil).
+        #expect(store.resizeOverlay(session.id, sizePercent: nil) == true)
+        #expect(session.overlaySizePercent == nil)
+        #expect(session.fullOverlayActive)
+        // out-of-range percents clamp to 1...100.
+        store.resizeOverlay(session.id, sizePercent: 250)
+        #expect(session.overlaySizePercent == 100)
+        store.resizeOverlay(session.id, sizePercent: 0)
+        #expect(session.overlaySizePercent == 1)
+        // the overlay program keeps running across every resize (no re-spawn).
+        #expect(session.overlayActive)
     }
 
     @Test func closeOverlayTearsDownAndClears() {

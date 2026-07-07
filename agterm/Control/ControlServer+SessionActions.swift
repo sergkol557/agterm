@@ -73,6 +73,15 @@ extension ControlServer: ControlActions {
         }
     }
 
+    func resizeSessionOverlay(_ target: String?, window: String?, sizePercent: Int?) -> ControlResponse {
+        resolver.resolveSession(target, window: window) { store, id in
+            guard store.resizeOverlay(id, sizePercent: sizePercent) else {
+                return ControlResponse(ok: false, error: "no overlay")
+            }
+            return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
+        }
+    }
+
     func sessionOverlayResult(_ target: String?, window: String?) -> ControlResponse {
         resolver.resolveSession(target, window: window) { store, id in
             guard let session = store.session(withID: id) else {
@@ -433,6 +442,17 @@ extension ControlServer: ControlActions {
             default: return ControlResponse(ok: false, error: "invalid flag mode: \(mode)")
             }
             store.setFlag(want, forSession: id) // no-op + no save when unchanged (idempotent)
+            return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
+        }
+    }
+
+    /// Clears a session's unseen-notification badge without changing the selection, focus, or agent
+    /// status — the focus-free counterpart to `notify`, which raises the badge over the socket but
+    /// which nothing could lower without visiting the session. Idempotent (a no-op when already zero,
+    /// since `clearUnseen` just assigns 0; the count is ephemeral so it triggers no save).
+    func markSessionSeen(_ target: String?, window: String?) -> ControlResponse {
+        resolver.resolveSession(target, window: window) { store, id in
+            store.clearUnseen(id)
             return ControlResponse(ok: true, result: ControlResult(id: id.uuidString))
         }
     }

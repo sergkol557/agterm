@@ -133,6 +133,15 @@ struct CommandsTests {
         #expect(try request(["session", "select"]) == ControlRequest(cmd: .sessionSelect, target: "active"))
     }
 
+    @Test func sessionSeenDefaultsActive() throws {
+        #expect(try request(["session", "seen"]) == ControlRequest(cmd: .sessionSeen, target: "active"))
+    }
+
+    @Test func sessionSeenTargetAndWindow() throws {
+        let expected = ControlRequest(cmd: .sessionSeen, target: "x", args: ControlArgs(window: "win"))
+        #expect(try request(["session", "seen", "--target", "x", "--window", "win"]) == expected)
+    }
+
     @Test func sessionRename() throws {
         let expected = ControlRequest(cmd: .sessionRename, target: "active", args: ControlArgs(name: "build"))
         #expect(try request(["session", "rename", "build"]) == expected)
@@ -578,6 +587,26 @@ struct CommandsTests {
             == ControlRequest(cmd: .sessionOverlayResult, target: "9f3c"))
     }
 
+    @Test func sessionOverlayResizeWithSizePercent() throws {
+        let expected = ControlRequest(cmd: .sessionOverlayResize, target: "9f3c", args: ControlArgs(sizePercent: 40))
+        #expect(try request(["session", "overlay", "resize", "--size-percent", "40", "--target", "9f3c"]) == expected)
+    }
+
+    @Test func sessionOverlayResizeFull() throws {
+        let expected = ControlRequest(cmd: .sessionOverlayResize, target: "active", args: ControlArgs(full: true))
+        #expect(try request(["session", "overlay", "resize", "--full"]) == expected)
+    }
+
+    @Test func sessionOverlayResizeRejectsBadArgs() {
+        // validate() enforces exactly-one-of --size-percent/--full and the 1...100 range at parse time.
+        #expect(throws: (any Error).self) { try Agtermctl.parseAsRoot(["session", "overlay", "resize"]) }
+        #expect(throws: (any Error).self) {
+            try Agtermctl.parseAsRoot(["session", "overlay", "resize", "--full", "--size-percent", "50"])
+        }
+        #expect(throws: (any Error).self) { try Agtermctl.parseAsRoot(["session", "overlay", "resize", "--size-percent", "150"]) }
+        #expect(throws: (any Error).self) { try Agtermctl.parseAsRoot(["session", "overlay", "resize", "--size-percent", "0"]) }
+    }
+
     @Test func sessionOverlayBlockRejectsWait() {
         // validate() enforces the mutually-exclusive flags at parse time (before any connection).
         #expect(throws: (any Error).self) {
@@ -750,6 +779,18 @@ struct CommandsTests {
     @Test func windowMoveDefaultsActiveAndCurrentDisplay() throws {
         let expected = ControlRequest(cmd: .windowMove, target: "active", args: ControlArgs(x: 100, y: 50))
         #expect(try request(["window", "move", "--x", "100", "--y", "50"]) == expected)
+    }
+
+    @Test func windowZoom() throws {
+        #expect(try request(["window", "zoom", "9f3c"]) == ControlRequest(cmd: .windowZoom, target: "9f3c"))
+    }
+
+    @Test func windowFullscreen() throws {
+        #expect(try request(["window", "fullscreen", "9f3c"]) == ControlRequest(cmd: .windowFullscreen, target: "9f3c"))
+    }
+
+    @Test func windowFullscreenDefaultsActive() throws {
+        #expect(try request(["window", "fullscreen"]) == ControlRequest(cmd: .windowFullscreen, target: "active"))
     }
 
     @Test func windowDeleteDefaultsActive() throws {
