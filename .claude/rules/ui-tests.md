@@ -124,6 +124,26 @@ paths:
   focused for self-contained changes; full only for foundational/cross-concern work (app launch,
   signing/bundle, the eager deck, window/scene wiring, shared chrome).
   Don't burn minutes re-running the whole suite when the change is self-contained.
+- **After editing a TEST file, rebuild the test bundle with `build-for-testing` — `test-without-building`
+  runs the STALE bundle.**
+  `xcodebuild build` (or `make build`) builds only the APP target, NOT the `agtermUITests` bundle.
+  So `xcodebuild build` then `test-without-building` runs the OLD compiled test against the NEW app —
+  the source edit is silently ignored.
+  The symptom is confusing: the run reports `Executed 0 tests` with a crash/`Restarting after unexpected
+  exit` line and the named test under "Failing tests", which looks like an app launch crash — but the
+  xcresult `Failure Message` is an ordinary `XCTAssertTrue failed` from the OLD assertion (e.g. it still
+  looks for a control the new UI renamed).
+  Fix: run `xcodebuild build-for-testing …` (builds app + test bundle) before `test-without-building`, or
+  just `xcodebuild test …` (builds then tests).
+  Read the real reason from the xcresult (`xcrun xcresulttool get test-results tests --path <xcresult>`,
+  find the `Failure Message` node) rather than trusting the "0 tests / crash" summary.
+- **Driving a Picker in XCUITest depends on its style.**
+  A `.segmented` Picker exposes each option as a hittable descendant by label — match
+  `picker.descendants(matching: .any).matching(label == "X").firstMatch` and `.click()` it directly.
+  A default/menu Picker (macOS Form dropdown, e.g. Font/Theme/Toolbar) does NOT — `picker.click()` to
+  open the popup, then click `app.menuItems["X"]` (see `SettingsUITests.testNewSessionDirectoryPickerPersists`
+  / `testToolbarModePickerPersists`).
+  Changing a Picker's style therefore requires updating its test's interaction, not just the label.
 - **A screen-occluding overlay app (HazeOver) makes `app.typeText`/`typeKey` fail with `Failed to synthesize event: Timed out while synthesizing event`**
   — a ~90 s hang that ends the test with NO `XCTAssert` failure (the keyboard event never reaches the
   covered window; the run log shows `Synthesize event` → `Failed: Timed out` ~64 s apart).
