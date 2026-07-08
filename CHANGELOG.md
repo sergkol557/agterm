@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.10.0 - 2026-07-08
+
+### New Features
+
+- hidden toolbar mode - a full-bleed terminal with no titlebar row and no traffic-light buttons #173 @umputun
+- reopen recently closed sessions #174 @melonamin
+- follow the macOS light/dark appearance automatically via ghostty's dual theme value #74 @paul-nameless
+- read-back for the focused split pane, status blink/color, and quick-terminal visibility over the control API #169 @umputun
+- read-back for split ratio, window geometry, workspace focus, sidebar mode, and window fullscreen/zoom over the control API #168 @umputun
+- expose an open overlay's size on the tree read side #167 @umputun
+
+### Improvements
+
+- reveal file:// links in Finder instead of doing nothing #162 @i-kozlov
+
 ## v0.9.0 - 2026-07-07
 
 ### New Features
