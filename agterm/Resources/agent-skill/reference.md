@@ -39,24 +39,43 @@ Full detail for every `agtermctl` command. See `SKILL.md` for the model and addr
 `agtermctl tree [--json] [--window W]` — the workspace/session tree. Each session node:
 `id`, `name`, `cwd`, `title` (the raw OSC terminal title — e.g. a remote host over SSH — omitted
 when none reported; distinct from `name`, the derived sidebar label), `active` (selected),
-`split` (split shown), `overlay` (overlay shown), `scratch` (scratch shown), `flagged` (in the
+`split` (split shown), `splitRatio` (the left-pane fraction 0.05–0.95 of a session that HAS a split —
+shown or hidden; omitted when there's no split or the ratio was never explicitly set (divider at the
+default 0.5) — the read side
+of `session resize`, record it to restore the exact divider position),
+`splitFocused` (which pane holds focus in a session that HAS a split — `true` = the split/right pane,
+`false` = the main/left pane; omitted when there's no split; the read side of `session focus`, record it
+to restore focus via `session focus --pane left|right`), `overlay` (overlay shown),
+`overlaySizePercent` (an open overlay's size — the
+floating panel's percent of the pane, 1–100; omitted = a full-pane overlay or no overlay, so gate on
+`overlay` first; the read side of `session overlay resize`, e.g. record it before switching to `--full`
+to restore the exact size), `scratch` (scratch shown), `flagged` (in the
 flagged working-set), `status` (the agent-status — `active`|`completed`|`blocked` — omitted when
 idle), `statusPane` (which pane set that status — `left` (main) | `right` (split) | `scratch` — the
 `--pane` value from `session status`, omitted when unset or idle; gated on the same non-idle condition
-as `status`, so it is never reported without a `status`), `foreground`/`splitForeground` (the live argv of each pane's foreground
+as `status`, so it is never reported without a `status`), `statusBlink` (`true` when the status glyph is
+set to blink — the `--blink` value; omitted when idle or not blinking) and `statusColor` (the `#rrggbb`
+glyph-tint override — the `--color` value; omitted when idle or using the default color),
+`foreground`/`splitForeground` (the live argv of each pane's foreground
 process — what it is running — omitted when the pane sits at its shell prompt), and `background` (the
 background spec set via `session background` — a `{kind, text?, imagePath?, colorHex?, opacity?, fit?,
 position?, repeats?}` object; `kind` is `image`/`text`/`color` — omitted when none is set), and `unseen`
 (the unseen-notification badge count — raised by `notify`/OSC 9/777, cleared by `session seen` — omitted
-when zero). Workspace nodes carry `id`, `name`, `active`, `sessions`.
+when zero). Workspace nodes carry `id`, `name`, `active`, `sessions`, and `focused` (whether the sidebar
+tree is collapsed to this workspace — the read side of `workspace focus`, distinct from `active` the
+SELECTED workspace; omitted unless this is the focused one, and absent entirely when nothing is focused).
 
-The tree object itself carries three top-level read-only fields: `idleMs` (milliseconds since the last
+The tree object itself carries five top-level read-only fields: `idleMs` (milliseconds since the last
 user input in the window, omitted before any activity), `autoFollowMs` (the window's Auto-follow
-timeout in milliseconds, omitted when the setting is Disabled), and `sidebarVisible` (whether the
+timeout in milliseconds, omitted when the setting is Disabled), `sidebarVisible` (whether the
 window's sidebar is currently shown — the read side of the write-only `sidebar` command, so a script
 can restore it, e.g. a tmux-style zoom that hides the sidebar and must re-show it only when it was
-visible before). `idleMs` is live and grows while the window is idle, so it is on `tree` only, never
-`window.list`; `sidebarVisible` is on both. All three are read-only projections of GUI state.
+visible before), `sidebarMode` (`tree` or `flagged` — the sidebar view mode, the read side of
+`sidebar mode`), and `quickVisible` (whether the window's quick terminal is currently shown — the read
+side of the write-only `quick` command, so a script can make the toggle idempotent). `idleMs` is live
+and grows while the window is idle, so it is on `tree` only, never `window.list`; `sidebarVisible` is on
+both; `sidebarMode` and `quickVisible` are `tree`-only (a GUI toggle would leave a cached copy stale).
+All five are read-only projections of GUI state.
 
 ## workspace
 
@@ -277,9 +296,16 @@ shell (no controlling terminal — `/dev/tty` errors). See examples.md for usage
 - `window list` — `result.windows`, each with `id`, `name`, `open`, `active`, `autoFollowMs` (the
   window's Auto-follow timeout in milliseconds, omitted when the setting is Disabled), and
   `sidebarVisible` (whether that window's sidebar is shown, read from the open window's store — omitted
-  for a closed window with no live store). The `autoFollowMs` here is served from a cache and reflects the
-  value as of the last refresh, so a just-changed setting may lag until the next command. Unlike `tree`,
-  `window.list` does NOT carry `idleMs` — the live idle metric would freeze in that cache.
+  for a closed window with no live store), and `geometry` (the open window's live frame `{x, y, width,
+  height, display}` in the SAME units `window move`/`window resize` take — `x`/`y` top-left relative to
+  `display`, y down — omitted for a closed window; the read side of `window move`/`window resize`, so
+  record it, move/resize, then restore the exact frame), plus `fullscreen` and `zoomed` (whether the
+  window is in native full screen / zoomed-to-screen — the read side of `window fullscreen` / `window
+  zoom`, so a script can make those toggles idempotent; both omitted for a closed window). The
+  `geometry`/`fullscreen`/`zoomed` fields stay current — the cache is refreshed when a window
+  moves/resizes/zooms/enters or exits full screen, so a hand-drag or GUI toggle is reflected without needing
+  another command. (`autoFollowMs` still reflects the last cache refresh, since a settings change is rare;
+  and unlike `tree`, `window.list` does NOT carry `idleMs` — the live idle metric would freeze in the cache.)
 - `window select <id>` — raise it if open, else open it.
 - `window close <id>` — close the on-screen window (the bundle is kept; reopen with select).
 - `window rename <id> <name>`.
@@ -425,16 +451,28 @@ a terminal: open `ghostty.conf` in `$EDITOR`, then `agtermctl config reload`.
 The app's out-of-the-box default theme is the bundled **agterm** theme (a fresh install opens on it).
 A separate **default ghostty** entry means "no theme" — ghostty's own built-in colors (`theme` absent).
 
-`agtermctl theme list` — list the bundled theme names; returns `result.themes` (the names) and
-`result.theme` (the current one, absent = ghostty's built-in / "default ghostty"). Human output prints
-one name per line with a leading "default ghostty" row, the current one marked `* `.
+`agtermctl theme list` — list the bundled theme names; returns `result.themes` (the names),
+`result.theme` (the current plain theme, absent = ghostty's built-in / "default ghostty"), and
+`result.sync` with `result.light`/`result.dark` (the per-appearance themes). While syncing,
+`result.theme` is absent — the state rides the three sync fields. Human output prints one name per
+line with a leading "default ghostty" row, the active one(s) marked `* `; when syncing, a header notes
+the light/dark pair and both sides are marked.
 
 `agtermctl theme set [name]` — set and persist the terminal theme app-wide (the same change as Settings
-▸ Appearance ▸ Theme). Pass a bundled name (e.g. `agterm`); omit the name for ghostty's built-in
-default ("default ghostty"). An unknown name returns `unknown theme: <name>`. Returns `result.theme`
-= the applied name (absent = ghostty built-in); human output prints `ok`. App-global (no `--window`).
-The GUI's live-preview picker (View ▸ Select Theme…) is keyboard-only; over the socket `theme set` is
-the commit, with no preview.
+▸ Appearance), per slot:
+- `theme set <name>` sets the light/single theme; a dark theme, if set, is KEPT (syncing stays on).
+  Omit the name for ghostty's built-in default ("default ghostty") — with a dark theme set, that
+  clears BOTH (an unnamed side can't be part of a pair).
+- `theme set --dark <name>` sets the dark theme — the terminal then tracks the macOS Light/Dark
+  appearance, applying the matching side automatically as the OS switches (the light side seeds from
+  the current theme, else `Builtin Light`). `--light <name>` is an alias for the positional name.
+- `theme set --dark none` clears the dark theme — tracking stops, the light theme stays as the single
+  theme.
+The response always echoes the full state (`result.theme`/`sync`/`light`/`dark`). An unknown name
+returns `unknown theme: <name>`; a positional name combined with `--light` is a usage error. Human
+output prints `ok`. App-global (no `--window`). The GUI's live-preview picker (View ▸ Select Theme…)
+is keyboard-only — committing it replaces the CURRENT appearance's side when syncing (the pair is
+kept); over the socket `theme set` is the commit, with no preview.
 
 ## restore
 

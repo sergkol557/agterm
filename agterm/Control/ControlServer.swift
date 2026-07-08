@@ -1,3 +1,4 @@
+import AppKit
 import agtermCore
 import Darwin
 import Foundation
@@ -126,6 +127,20 @@ final class ControlServer {
         // would leave a window where a background window.list fast-path read still sees the stale cache.
         NotificationCenter.default.addObserver(forName: .agtermSidebarVisibilityChanged, object: nil, queue: nil) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshWindowCache() }
+        }
+        // window.list carries LIVE NSWindow geometry + fullscreen/zoom state, read at cache-build time. A
+        // user drag/resize/zoom/fullscreen changes it with NO control command, and a polling window.list is
+        // fast-path-served so it never refreshes its own cache — so observe the AppKit window notifications
+        // and refresh the cache on each. The fullscreen enter/exit notifications fire AFTER the async
+        // transition, so the refreshed cache sees the settled `styleMask`. The notification is ignored (not
+        // captured — a non-Sendable `Notification` can't cross into the `assumeIsolated` region under Swift 6);
+        // it fires for ANY window, but a non-agterm panel just rebuilds the same cheap agterm nodes, and a
+        // drag's didMove/didResize storm just keeps the cache current.
+        for name in [NSWindow.didMoveNotification, NSWindow.didResizeNotification,
+                     NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshWindowCache() }
+            }
         }
     }
 
@@ -359,7 +374,42 @@ final class ControlServer {
                 .windowClose, .windowRename, .windowDelete, .windowResize, .windowMove, .windowZoom,
                 .windowFullscreen, .restoreClear:
             return ControlResponse(ok: false, error: "control dispatcher did not handle \(request.cmd.rawValue)")
+        case .debugAppearance:
+            return setDebugAppearance(args: request.args)
         }
+    }
+
+    /// UI-TEST-ONLY seam: force the app-level appearance so an XCUITest can simulate a macOS light/dark
+    /// flip deterministically (macOS XCUITest has no API to change the system appearance). Setting
+    /// `NSApp.appearance` changes `NSApp.effectiveAppearance`; this arm ALSO posts
+    /// `.agtermSystemAppearanceChanged` directly, so the REAL flip path (scheme sync → debounced
+    /// zoom-preserving reload) is exercised end to end without depending on whether KVO fires on an
+    /// explicit set (production relies on the KVO observer firing on a genuine system flip). Refused
+    /// outside an XCUITest launch, and deliberately EXEMPT from the four-point keep-in-sync (no agtermctl
+    /// subcommand, absent from the catalog/skill) — test scaffolding, not a control surface. Setting
+    /// echoes the resulting effective side in `result.text`; the BARE form (no name) reads the side the
+    /// last config feed applied (`SettingsModel.lastAppliedIsDark`), which a test polls to assert the
+    /// flip actually drove the reload — a suppressed flip leaves it on the old side.
+    private func setDebugAppearance(args: ControlArgs?) -> ControlResponse {
+        guard ContentView.isUITestLaunch else {
+            return ControlResponse(ok: false, error: "debug.appearance is a UI-test-only seam")
+        }
+        guard args?.name != nil else {
+            return ControlResponse(ok: true, result: ControlResult(
+                text: settingsModel.lastAppliedIsDark ? "dark" : "light"))
+        }
+        guard let side = trimmed(args?.name), side == "light" || side == "dark" else {
+            return ControlResponse(ok: false, error: "debug.appearance requires light|dark")
+        }
+        // take the validated `side` directly — do NOT re-read `currentIsDark()`, whose
+        // `effectiveAppearance` may not have settled synchronously right after the set (the same
+        // "take the delivered value, never re-read" rule the production `SystemAppearanceObserver` follows).
+        let isDark = side == "dark"
+        NSApp.appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
+        // drive the flip pipeline directly (a duplicate KVO post, if any, is same-side-suppressed).
+        NotificationCenter.default.post(name: .agtermSystemAppearanceChanged, object: nil,
+                                        userInfo: ["isDark": isDark])
+        return ControlResponse(ok: true, result: ControlResult(text: isDark ? "dark" : "light"))
     }
 
     /// Clear every open session's saved foreground command (the restore-running-command capture) and
@@ -380,6 +430,10 @@ final class ControlServer {
     /// active workspace (the one owning the selected session).
     func buildTree(in store: AppStore) -> ControlTree {
         let shellBasename = ProcessInfo.processInfo.environment["SHELL"].map(CommandRestore.basename)
+        // the projected window owns its quick terminal; find its id by store identity to read the live
+        // QuickTerminalController.isVisible (a nil controller — never opened, or the window is tearing
+        // down — reads as not visible).
+        let windowID = library.openIDs().first { library.store(for: $0) === store }
         return store.controlTree(
             foreground: { session in
                 (session.surface as? GhosttySurfaceView).flatMap {
@@ -390,7 +444,8 @@ final class ControlServer {
                 (session.splitSurface as? GhosttySurfaceView).flatMap {
                     ForegroundProcess.command(for: $0, shellBasename: shellBasename)
                 }
-            }
+            },
+            quickVisible: { windowID.flatMap { QuickTerminalRegistry.shared.controller(for: $0)?.isVisible } ?? false }
         )
     }
 

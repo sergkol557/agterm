@@ -161,7 +161,8 @@ public final class AppStore {
     /// Projects this store's workspace/session model into the control-channel `tree` payload. Foreground
     /// command lookup is supplied by the host because live process inspection is platform-specific.
     public func controlTree(foreground: (Session) -> [String]? = { _ in nil },
-                            splitForeground: (Session) -> [String]? = { _ in nil }) -> ControlTree {
+                            splitForeground: (Session) -> [String]? = { _ in nil },
+                            quickVisible: () -> Bool? = { nil }) -> ControlTree {
         let activeID = selectedSessionID
         let activeWorkspaceID = activeID.flatMap { workspace(forSession: $0)?.id }
         let nodes = workspaces.map { workspace in
@@ -172,19 +173,28 @@ public final class AppStore {
                 return ControlSessionNode(id: session.id.uuidString, name: session.displayName,
                                           cwd: session.effectiveCwd, title: session.oscTitle,
                                           active: session.id == activeID,
-                                          split: session.isSplit, overlay: session.overlayActive,
+                                          split: session.isSplit,
+                                          splitRatio: session.hasSplit ? session.splitRatio : nil,
+                                          splitFocused: session.hasSplit ? session.splitFocused : nil,
+                                          overlay: session.overlayActive,
+                                          overlaySizePercent: session.overlayActive ? session.overlaySizePercent : nil,
                                           scratch: session.scratchActive, flagged: session.flagged,
                                           foreground: foreground(session),
                                           splitForeground: splitForeground(session), status: status,
                                           statusPane: statusPane,
+                                          statusBlink: idle ? nil : (session.agentIndicator.blink ? true : nil),
+                                          statusColor: idle ? nil : session.agentIndicator.color,
                                           background: session.backgroundWatermark,
                                           unseen: session.unseenCount > 0 ? session.unseenCount : nil)
             }
             return ControlWorkspaceNode(id: workspace.id.uuidString, name: workspace.name,
-                                        active: workspace.id == activeWorkspaceID, sessions: sessions)
+                                        active: workspace.id == activeWorkspaceID,
+                                        focused: workspace.id == focusedWorkspaceID ? true : nil,
+                                        sessions: sessions)
         }
         return ControlTree(workspaces: nodes, idleMs: idleMs(), autoFollowMs: autoFollowMs,
-                           sidebarVisible: sidebarVisible)
+                           sidebarVisible: sidebarVisible, sidebarMode: sidebarMode.rawValue,
+                           quickVisible: quickVisible())
     }
 
     /// Creates a workspace and appends it. Clears any active focus so the new (empty)

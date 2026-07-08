@@ -59,6 +59,24 @@ paths:
   NOT add fresh validation/response logic inline in the `ControlServer` switch.
   (This is the control-channel case of the root `CLAUDE.md` "hoist host-free logic down into `agtermCore`"
   module-boundary rule.)
+- **The four-point audit is the WRITE path; a state-mutating command also owes a READ-BACK field.**
+  Whenever a command SETS or MUTATES per-session state, surface that state on `ControlSessionNode` (or
+  the tree top-level) so a script can query the value it just wrote: record-then-restore, read-modify-write,
+  and idempotency all depend on reading back what a `set`/`resize`/`toggle` changed.
+  The read field is populated in `AppStore.controlTree` and, like the other optionals, omitted from the
+  JSON when nil.
+  Existing pairs to mirror: `session.background`/`background`, `notify`+`session.seen`/`unseen`,
+  `session.status`/`status`+`statusPane` (+`statusBlink`/`statusColor` for `--blink`/`--color`),
+  `session.flag`/`flagged`, `session.focus`/`splitFocused`, `session.resize`/`splitRatio`,
+  `session.overlay.resize`/`overlaySizePercent`, `sidebar`/`sidebarVisible` (top-level),
+  `sidebar.mode`/`sidebarMode`, `workspace.focus`/`focused` (workspace node), `quick`/`quickVisible` (top-level),
+  `window.move`+`window.resize`/`geometry`, `window.fullscreen`+`window.zoom`/`fullscreen`+`zoomed`
+  (the last three on `window.list`).
+  This is a SEPARATE obligation from the four-point audit (Command + arg + CLI + tests) and easy to forget:
+  `session.overlay.resize` shipped write-only and `overlaySizePercent` was added only later, when a
+  tmux-zoom script needed to restore an overlay's exact size.
+  When adding a state-mutating command, add its read-back field in the SAME change and cover it with a
+  `treeSessionNodeRoundTrips…`/`…OmitsWhenNil` round-trip test plus a `controlTree` populate test.
 - **Bundling + install.**
   The `agterm` target's `Bundle agtermctl CLI` postBuildScript (`project.yml`) runs `swift build -c release --product agtermctl`,
   copies it to `agterm.app/Contents/MacOS/agtermctl`, ad-hoc signs the helper,
@@ -186,6 +204,20 @@ paths:
   - `theme.set`/`theme.list` (see the Theme picker section)
   - `restore.clear` (see the Settings section)
 
+  One extra `Command` case is deliberately NOT part of the catalog: `debug.appearance` (`light`|`dark`
+  via `args.name`) is a UI-TEST-ONLY seam that sets `NSApp.appearance` so an XCUITest can simulate a
+  macOS light/dark flip (macOS XCUITest has no API for it); the arm ALSO posts
+  `.agtermSystemAppearanceChanged` directly so the flip pipeline runs deterministically without depending
+  on whether KVO fires on an explicit `NSApp.appearance` set (production follows the appearance via an
+  app-level KVO observer on `NSApplication.effectiveAppearance` — see the theme-picker/libghostty rules).
+  The `ControlServer` arm refuses it outside an XCUITest launch (`ContentView.isUITestLaunch`), it gets
+  NO `agtermctl` subcommand, and it stays out of the agent skill — a documented keep-in-sync EXEMPTION
+  (test scaffolding, not a control surface).
+  Setting echoes the resulting effective side in `result.text`; the BARE form (no name) reads the side
+  the last config feed applied (`SettingsModel.lastAppliedIsDark`), which the test polls to prove the
+  flip actually drove the reload.
+  `AppearanceFlipUITests` is its only consumer; the public command count stays 53.
+
   `workspace.delete` honors keep-at-least-one and returns an error instead of the GUI confirm alert (nothing
   blocks on a modal).
   `session.move` is MODE-BEARING with THREE exclusive placement intents:
@@ -255,6 +287,8 @@ paths:
   shown side-by-side or hidden — when hidden, focusing a pane swaps which one shows maximized),
   drives `AppActions.setSplitFocus(_:of:)`, and is the control half of the ⌘⌥←/→ keyboard nav + the "Focus
   Left/Right Pane" menu/palette items.
+  Its READ side is `ControlSessionNode.splitFocused` (`true`=split/right, `false`=main/left, nil=no split;
+  see the `tree` read-side fields below), so a script can record the focused pane and restore it.
   `session.resize` moves the split DIVIDER — it is control-NATIVE (the divider is otherwise mouse-drag
   only; NO GUI/menu/keymap action, so a key is bound by mapping a `command "agtermctl session resize …"`
   custom action).
@@ -544,8 +578,20 @@ paths:
   `agtermctlKit`, (4) round-trip in `ControlProtocolTests` + dispatcher routing/validation in `ControlDispatcherTests`
   + `AppStorePaneTests` (resize clamp/switch/no-overlay) + CLI mapping in `CommandsTests` + the e2e
   `testOverlayResizeSwitchesFloatingAndFull` in `ControlOverlaySplitUITests`.
+  The READ side is `ControlSessionNode.overlaySizePercent` on each `tree` node (see the `tree` read-side
+  fields below) — populated in `AppStore.controlTree`, round-tripped by `treeSessionNodeRoundTripsWithOverlaySizePercent`/`…OmitsOverlaySizePercentWhenNil`
+  and `AppStorePaneTests.controlTreeReportsOverlaySizePercent`, and mirrored in the agent-skill `reference.md`
+  tree schema — so a script can record an overlay's size before zooming to `--full` and restore it exactly.
   Mode-bearing commands (`session.split`/`quick`) compute the delta against current state so `on`/`off`/`show`/`hide`
   are idempotent, and an unknown mode is an error.
+  `quick`'s visibility reads back on `ControlTree.quickVisible` at the tree TOP level — LIVE, resolved
+  app-side in `buildTree` from the projected window's `QuickTerminalController.isVisible` (the window id
+  found by store identity, `library.openIDs().first { library.store(for:) === store }`, since the quick
+  terminal is per-window); `tree`-only like `sidebarMode` (the GUI ⌃` toggle bypasses the command path, so
+  a cached `window.list` copy would go stale), so a script can make the `quick` toggle idempotent.
+  Threaded as a `quickVisible: () -> Bool?` closure on `AppStore.controlTree` (defaulting nil for host-free
+  tests), covered by `treeRoundTripsWithQuickVisible`/`treeOmitsQuickVisibleWhenNil` +
+  `AppStoreTests.controlTreeReportsQuickVisibleFromClosure`; the app-side `QuickTerminalRegistry` read is build-verified.
   `session.status` flags a per-session agent status on the sidebar row — `args.status` is `idle`|`active`|`completed`|`blocked`
   (`AgentStatus(rawValue:)` → an `invalid status` error on anything else),
   `args.blink` pulses the glyph, and `args.autoReset` (status-agnostic, caller-set,
@@ -611,6 +657,10 @@ paths:
   (see the Menu/actions rule).
   It reads back on each `tree` node as `ControlSessionNode.statusPane` (omitted when nil, gated on the SAME
   non-idle condition as `status` so an idle node reports neither).
+  The `--blink` flag and `--color` override read back the same way — `ControlSessionNode.statusBlink`
+  (`true` when blinking, omitted otherwise) and `statusColor` (the `#rrggbb`, omitted when using the default
+  color), both populated in the tree builder gated on the SAME non-idle condition — so a script can record
+  the FULL status (state + pane + blink + color) and restore it.
   Four-point keep-in-sync audit for `session.status --pane`: (1) the `StatusPane` enum + `AgentIndicator.statusPane`
   + `AgentIndicator.clearedBy(pane:isEscape:)` + `ControlSessionStatusUpdate.pane` + `ControlSessionNode.statusPane`
   + `SurfaceEnvironment.session(pane:)` (injects `AGTERM_PANE`) in `agtermCore`, plus the dispatcher `StatusPane`
@@ -666,22 +716,29 @@ paths:
   (2) the `.sidebar` dispatch arm (`setSidebar`) in `ControlServer`, (3) the `sidebar` subcommand in
   `agtermctlKit`, (4) round-trip in `ControlProtocolTests` + the e2e `testSidebarShowHideToggle` (sidebar
   hide removes the `session-row`s from the AX tree) in `ControlSidebarStatusUITests`.
-  `theme.set` sets + persists a theme by name (`args.name`; nil/empty = ghostty's built-in / "default
-  ghostty", NOT the seeded `agterm` app default — see the Theme picker section) — the control half of
-  the Settings picker / the `.themes` palette commit, the SAME `SettingsModel.setTheme` persist+apply
-  path (NO live preview over the socket — preview is interactive-only).
+  `theme.set` sets + persists a theme (see the Theme picker section) PER SLOT, mirroring the two Settings pickers over the shared `SettingsModel.setLightTheme`/`setDarkTheme`/`setSystemThemes`.
+  `args.name` (alias `args.light`; both together is an error) sets the light/single `theme` slot,
+  KEEPING the `darkTheme` slot if one is set (they are separate fields, no recompose);
+  nil/empty = ghostty's built-in / "default ghostty" (NOT the seeded `agterm` app default),
+  and a bare `theme set` clears BOTH slots + turns syncing off.
+  `args.dark` sets the `darkTheme` slot alone and turns appearance syncing ON (`followSystemAppearance`,
+  the light side seeds from the current theme, else `Builtin Light`);
+  the reserved value `none` clears the dark slot (syncing off, the light side survives as the plain theme).
+  The `.themes` palette commit maps to the CURRENT appearance's slot (NO live preview over the socket — preview is interactive-only).
   An unknown name (not in `SettingsCatalog.themeNames()`) is an `unknown theme: X` error (a typo silently
-  doing nothing is worse than a fail); the applied name echoes in `result.theme` (nil = ghostty built-in).
-  `theme.list` returns `result.themes` = the bundled names + `result.theme` = the current one (nil =
-  ghostty built-in; absent on a fresh install means the seeded `agterm` is current);
+  doing nothing is worse than a fail); the response always echoes the full post-change state
+  (`result.theme`/`sync`/`light`/`dark`).
+  `theme.list` returns `result.themes` = the bundled names + `result.theme` = the plain current one (nil =
+  ghostty built-in; absent on a fresh install means the seeded `agterm` is current) + `result.sync`/`light`/`dark`;
+  while syncing `result.theme` is ABSENT — the state rides the three sync fields.
   `agtermctl theme list` prints one name per line with a leading "default ghostty" row,
-  the current marked `* `, and `theme.set` prints `ok` (non-create mutation).
+  the active marked `* ` (both sides + a header while syncing), and `theme.set` prints `ok` (non-create mutation).
   App-global like `keymap.reload` (one `SettingsModel`), so NO `--window` selector.
   Four-point keep-in-sync audit: (1) `case themeSet = "theme.set"` + `case themeList = "theme.list"`
   in `ControlProtocol.swift` (reuse `ControlArgs.name`; add `ControlResult.theme`/`themes`),
   (2) the `.themeSet` (`setTheme`, with name validation) + `.themeList` dispatch arms in `ControlServer`,
-  (3) the `theme set [name]` / `theme list` subcommands in `agtermctlKit` (+ `SocketClient.formatThemes`),
-  (4) round-trip in `ControlProtocolTests` + the e2e `testThemeListAndSet` in `ControlAPIUITests`.
+  (3) the `theme set [name] [--light] [--dark]` / `theme list` subcommands in `agtermctlKit` (+ `SocketClient.formatThemes`),
+  (4) round-trip in `ControlProtocolTests` + the e2e `testThemeListAndSet` in `ControlAPIUITests` and `testThemeSyncWithSystemAppearance` in `ControlAPIThemeUITests`.
   See the Theme picker section for the GUI/preview half.
   `session.flag` (target = session) flags/unflags a session for the flagged working-set view — `args.mode`
   is `on`|`off`|`toggle`|`clear` (`clear` IGNORES the target and unflags every session in the resolved
@@ -723,6 +780,10 @@ paths:
   It is the control half of the bottom-bar `flagged-view-toggle` + the View-menu Show Flagged/Show All
   + `BuiltinAction.toggleFlaggedView`; the existing `sidebar [show|hide|toggle]` is now the default `sidebar visibility`
   subcommand alongside `sidebar mode`.
+  Its READ side is `ControlTree.sidebarMode` at the tree TOP level (`AppStore.sidebarMode.rawValue`,
+  `tree`|`flagged`), the read side of this write-only command so a script can record and restore the view
+  mode — the sibling of `sidebarVisible`, except `tree`-ONLY (not mirrored onto the cached `window.list`,
+  since the GUI `flagged-view-toggle` bypasses the command path and would leave a cached copy stale).
   Four-point keep-in-sync audit: (1) `case sidebarMode = "sidebar.mode"` in `ControlProtocol.swift` (reuses
   `ControlArgs.mode`), (2) the `.sidebarMode` dispatch arm (`setSidebarViewMode`) in `ControlServer`,
   (3) the `sidebar mode tree|flagged|toggle` subcommand (`Mode`, alongside the `Visibility` default)
@@ -762,6 +823,9 @@ paths:
   selecting a session outside the focused workspace auto-unfocuses (see the Sidebar section).
   It is the control half of the workspace-row Focus/Unfocus + the `focus-pill` ✕ + `BuiltinAction.focusWorkspace`/`focusActiveWorkspace`
   + the Clear Focus menu/palette item.
+  Its READ side is `ControlWorkspaceNode.focused` on each `tree` workspace node (`workspace.id == focusedWorkspaceID ? true : nil`
+  in the tree builder — DISTINCT from `active`, the selected workspace), so a script can record which
+  workspace is focused and restore it; omitted on the non-focused ones and absent when nothing is focused.
   Four-point keep-in-sync audit: (1) `case workspaceFocus = "workspace.focus"` in `ControlProtocol.swift`
   (reuses `ControlArgs.mode`), (2) the `.workspaceFocus` dispatch arm (`focusWorkspace`) in `ControlServer`,
   (3) the `workspace focus on|off|toggle` subcommand (`Focus`) in `agtermctlKit`,
@@ -774,6 +838,24 @@ paths:
   is each pane running".
   It ALSO surfaces `background` on each node — the `BackgroundWatermark` spec set via `session.background`
   (omitted when none), the read side of set/clear so a script can query the current watermark.
+  It ALSO surfaces `overlaySizePercent` on each node — an OPEN overlay's size (`session.overlayActive ? session.overlaySizePercent : nil`
+  in the tree builder): nil/omitted = the full-pane overlay OR no overlay (so gate on `overlay` first),
+  else the floating panel's percent (1...100).
+  It is the READ side of `session.overlay.resize` (which had only the write side), so a tmux-style zoom
+  script can record the current size before switching to `--full` and restore the EXACT original on un-zoom
+  (not a guessed default).
+  It ALSO surfaces `splitRatio` on each node — the left-pane divider fraction of a session that HAS a split
+  (`session.hasSplit ? session.splitRatio : nil` in the tree builder, so shown OR hidden splits report it),
+  nil/omitted when there is no split or the ratio was never explicitly set (divider then at the default 0.5).
+  It is the READ side of `session.resize` (whose applied ratio was echoed ONLY on the resize call's own
+  `ControlResult.ratio`), so a script can record the current ratio before maximizing a pane and restore the
+  exact divider even if the USER dragged it.
+  It ALSO surfaces `splitFocused` on each node — which pane holds focus in a session that HAS a split
+  (`session.hasSplit ? session.splitFocused : nil` in the tree builder, so shown OR hidden splits report it):
+  `true` = the split (right) pane, `false` = the main (left) pane, nil/omitted when there is no split.
+  It is the READ side of `session.focus` (write-only), so a script can record which pane was focused and
+  restore it via `session.focus --pane left|right` (a `false` is emitted, distinct from the nil no-split
+  case — the left pane being focused is real state).
   `tree` ALSO carries, at the TOP level (alongside `idleMs`/`autoFollowMs`), `sidebarVisible` — the read
   side of the write-only `sidebar` command (per-window sidebar visibility), populated LIVE from the
   projected window's store in `AppStore.controlTree`.
@@ -786,6 +868,35 @@ paths:
   A script that reads-then-acts (e.g. the tmux-style zoom that must restore the sidebar only if it was
   visible) should still prefer `tree`'s LIVE `sidebarVisible` over the cached `window.list` one — the tree
   is built on the main actor per request, so it can never lag.
+  Each `ControlWindowNode` ALSO carries `geometry` — the open window's live on-screen frame
+  (`ControlWindowFrame{x, y, width, height, display}`, omitted for a closed window with no NSWindow).
+  It is the READ side of the write-only `window.move`/`window.resize` (which set the frame but nothing
+  reported it), in the SAME coordinate system those accept: `x`/`y` are the top-left relative to `display`
+  (y down), `width`/`height` the frame size, so a read-back round-trips straight back through
+  `window.move`/`window.resize` (record → resize/move → restore the exact frame).
+  Because the frame lives in AppKit (`WindowLibrary` is host-free), `controlWindowNodes` takes an app-side
+  `geometry:` closure (default nil for tests) that `ControlServer.buildWindowList` fills from
+  `WindowRegistry.geometry(for:)` — the exact inverse of `move`'s forward math.
+  It rides the `cachedWindowNodes` cache (there is no LIVE tree copy — geometry is window-scoped, absent
+  from the session tree), and since a user drag/resize/zoom/fullscreen changes it with NO control command
+  AND a polling `window.list` is fast-path-served (so it never refreshes its own cache), `ControlServer`
+  observes the NSWindow `didMove`/`didResize`/`didEnterFullScreen`/`didExitFullScreen` notifications and
+  `refreshWindowCache`s on each (the fullscreen ones fire AFTER the async transition, so the settled
+  `styleMask` is captured) — mirroring the `.agtermSidebarVisibilityChanged` refresh for the GUI-only
+  sidebar toggle, so the read-back stays current.
+  The notification is IGNORED, not captured — a non-Sendable `Notification` can't cross into the
+  `MainActor.assumeIsolated` block under Swift 6 strict concurrency (the `sending 'note'` error), so the
+  refresh fires for ANY window rather than filtering to an agterm one; harmless, since a non-agterm panel
+  just rebuilds the same cheap agterm nodes.
+  The host-free plumbing (the closure + node field) is unit-tested (`controlWindowNodesIncludeGeometryFromClosure`,
+  the round-trips); the coordinate conversion + the NSWindow-notification cache refresh are app-side, build-verified.
+  Each `ControlWindowNode` ALSO carries `fullscreen`/`zoomed` — the read side of the write-only
+  `window.fullscreen`/`window.zoom` toggles (so a script can toggle idempotently), filled by a PARALLEL
+  app-side `flags:` closure on `controlWindowNodes` (kept separate from `geometry:` so each stays a clean
+  addition) that `buildWindowList` reads from `WindowRegistry.windowFlags(for:)`
+  (`styleMask.contains(.fullScreen)` / `NSWindow.isZoomed`); both nil/omitted for a closed window, on the
+  cache like `geometry`. The closure plumbing is unit-tested (`controlWindowNodesIncludeFullscreenZoomFromClosure`
+  + the round-trips); the NSWindow reads are app-side, build-verified.
   `restore.clear` clears every open session's saved CAPTURED foreground command (`Session.foregroundCommand`/`splitForegroundCommand`)
   and persists via `library.saveAllOpen()`, so the next restart restores plain shells for those panes instead
   of re-running the captured commands (also closing the force-quit re-fire: the restored command is consumed

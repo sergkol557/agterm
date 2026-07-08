@@ -57,6 +57,12 @@ public enum Command: String, Codable, Sendable {
     case themeSet = "theme.set"
     case themeList = "theme.list"
     case restoreClear = "restore.clear"
+    /// UI-TEST-ONLY: force the app-level appearance (`light`|`dark` via `args.name`) so an XCUITest can
+    /// simulate a macOS light/dark flip; with NO name it READS the side the last config feed applied,
+    /// so a test can assert the flip actually drove the reload. The server refuses it outside an
+    /// XCUITest launch; deliberately EXEMPT from the four-point keep-in-sync (no CLI subcommand, absent
+    /// from the catalog/skill).
+    case debugAppearance = "debug.appearance"
 }
 
 /// A bag of optional command parameters. Each command reads only the fields it needs; the rest stay
@@ -175,6 +181,12 @@ public struct ControlArgs: Codable, Sendable, Equatable {
     /// (`NSSound(named:)`, e.g. `Glass`, also resolving custom sounds in `~/Library/Sounds`). nil/empty means
     /// no per-call sound — the app may still play the Settings "Blocked sound" default on a `blocked` status.
     public var sound: String?
+    /// The per-slot theme names for `theme.set`: `light` is the light/single slot (an alias for the
+    /// positional `name`, so passing both is an error); `dark` sets the dark slot — its presence makes
+    /// the app track the macOS appearance (the stored value becomes ghostty's dual `light:,dark:`
+    /// form), and the reserved value `none` clears it. Names must be bundled themes.
+    public var light: String?
+    public var dark: String?
 
     public init(name: String? = nil, cwd: String? = nil, workspace: String? = nil, workspaceName: String? = nil,
                 createWorkspace: Bool? = nil, text: String? = nil, select: Bool? = nil, mode: String? = nil,
@@ -186,7 +198,8 @@ public struct ControlArgs: Codable, Sendable, Equatable {
                 status: String? = nil, blink: Bool? = nil, autoReset: Bool? = nil, sound: String? = nil,
                 ratio: Double? = nil, ratioDelta: Double? = nil,
                 path: String? = nil, color: String? = nil, opacity: Double? = nil, fit: String? = nil,
-                position: String? = nil, repeats: Bool? = nil, all: Bool? = nil, lines: Int? = nil) {
+                position: String? = nil, repeats: Bool? = nil, all: Bool? = nil, lines: Int? = nil,
+                light: String? = nil, dark: String? = nil) {
         self.name = name
         self.cwd = cwd
         self.workspace = workspace
@@ -226,6 +239,8 @@ public struct ControlArgs: Codable, Sendable, Equatable {
         self.repeats = repeats
         self.all = all
         self.lines = lines
+        self.light = light
+        self.dark = dark
     }
 }
 
@@ -255,7 +270,22 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
     public let title: String?
     public let active: Bool
     public let split: Bool
+    /// The left-pane fraction (0.05...0.95) of a session that HAS a split pane (shown or hidden), or nil
+    /// when the session has no split OR the ratio was never explicitly set (via `session.resize` or a
+    /// divider drag), in which case the divider sits at the default 0.5. The read side of `session.resize`
+    /// — record it before maximizing a pane so a script can restore the exact divider position (the applied
+    /// ratio is otherwise echoed only on the `session.resize` call itself).
+    public let splitRatio: Double?
+    /// For a session that HAS a split pane (shown or hidden), which pane holds keyboard focus: `true` = the
+    /// split (right) pane, `false` = the main (left) pane; nil when the session has no split (omitted from
+    /// the JSON). The read side of `session.focus` — record which pane was focused so a script can restore
+    /// it via `session.focus --pane left|right`.
+    public let splitFocused: Bool?
     public let overlay: Bool
+    /// For an OPEN overlay (`overlay == true`), its size: nil/omitted = the FULL-pane overlay, else the
+    /// floating panel's percent of the pane (1...100). Absent when no overlay is open. The read side of
+    /// `session.overlay.resize` — record the current size before resizing so a script can restore it exactly.
+    public let overlaySizePercent: Int?
     public let scratch: Bool
     public let flagged: Bool
     /// The LIVE foreground process command (full argv) in the main pane, or nil when the pane is at its
@@ -270,6 +300,12 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
     /// Which pane set the session's agent status (`"left"|"right"|"scratch"`, `left`=main, `right`=split),
     /// or nil when idle or unspecified (omitted from the JSON). The read side of `session.status --pane`.
     public let statusPane: String?
+    /// Whether the session's agent status glyph is set to blink (pulse for attention), or nil when idle or
+    /// not blinking (omitted from the JSON). The read side of `session.status --blink`.
+    public let statusBlink: Bool?
+    /// The per-call `#rrggbb` glyph-tint override for the session's agent status, or nil when idle or using
+    /// the Settings-configured status color (omitted from the JSON). The read side of `session.status --color`.
+    public let statusColor: String?
     /// The session's background watermark spec, or nil when none is set (omitted from the JSON). The read
     /// side of `session.background` — set/clear/query symmetry, so a script can inspect the current watermark.
     public let background: BackgroundWatermark?
@@ -279,22 +315,29 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
     public let unseen: Int?
 
     public init(id: String, name: String, cwd: String, title: String? = nil, active: Bool, split: Bool,
-                overlay: Bool = false, scratch: Bool = false, flagged: Bool = false,
+                splitRatio: Double? = nil, splitFocused: Bool? = nil,
+                overlay: Bool = false, overlaySizePercent: Int? = nil, scratch: Bool = false, flagged: Bool = false,
                 foreground: [String]? = nil, splitForeground: [String]? = nil, status: String? = nil,
-                statusPane: String? = nil, background: BackgroundWatermark? = nil, unseen: Int? = nil) {
+                statusPane: String? = nil, statusBlink: Bool? = nil, statusColor: String? = nil,
+                background: BackgroundWatermark? = nil, unseen: Int? = nil) {
         self.id = id
         self.name = name
         self.cwd = cwd
         self.title = title
         self.active = active
         self.split = split
+        self.splitRatio = splitRatio
+        self.splitFocused = splitFocused
         self.overlay = overlay
+        self.overlaySizePercent = overlaySizePercent
         self.scratch = scratch
         self.flagged = flagged
         self.foreground = foreground
         self.splitForeground = splitForeground
         self.status = status
         self.statusPane = statusPane
+        self.statusBlink = statusBlink
+        self.statusColor = statusColor
         self.background = background
         self.unseen = unseen
     }
@@ -305,12 +348,18 @@ public struct ControlWorkspaceNode: Codable, Sendable, Equatable {
     public let id: String
     public let name: String
     public let active: Bool
+    /// Whether this workspace is the one the sidebar tree is FOCUSED (collapsed) to, or nil when it is not
+    /// the focused one / no workspace is focused (omitted from the JSON). Distinct from `active` (the
+    /// SELECTED workspace): focus collapses the sidebar to a single workspace. The read side of the
+    /// write-only `workspace.focus` — so a script can record which workspace is focused and restore it.
+    public let focused: Bool?
     public let sessions: [ControlSessionNode]
 
-    public init(id: String, name: String, active: Bool, sessions: [ControlSessionNode]) {
+    public init(id: String, name: String, active: Bool, focused: Bool? = nil, sessions: [ControlSessionNode]) {
         self.id = id
         self.name = name
         self.active = active
+        self.focused = focused
         self.sessions = sessions
     }
 }
@@ -333,13 +382,48 @@ public struct ControlTree: Codable, Sendable, Equatable {
     /// so unlike `idleMs`/`autoFollowMs` it never omits; the per-window `window.list` copy is nil/omitted
     /// only for a closed window.
     public let sidebarVisible: Bool?
+    /// The projected window's sidebar VIEW mode — `SidebarMode.rawValue` (`tree` = the workspace tree,
+    /// `flagged` = the flat flagged working-set list). LIVE and always populated on an app-produced `tree`
+    /// response; the type stays optional at the protocol level (like the other `tree` fields) for
+    /// forward-compat with version skew. The read side of the write-only `sidebar.mode` command, so a script can record the
+    /// mode and restore it. `tree`-only (not on `window.list`), since a GUI-only flagged-view toggle would
+    /// leave a cached copy stale — read the live tree copy instead.
+    public let sidebarMode: String?
+    /// Whether the projected window's quick terminal is currently visible. LIVE — resolved app-side per
+    /// request from the window's `QuickTerminalController` — so a script can make the `quick` toggle
+    /// idempotent (show only when hidden). The read side of the write-only `quick` command. `tree`-only
+    /// (not on `window.list`), since a GUI-only ⌃` toggle bypasses the command path and would leave a
+    /// cached copy stale — read the live tree copy instead. nil in a host-produced tree with no app closure.
+    public let quickVisible: Bool?
 
     public init(workspaces: [ControlWorkspaceNode], idleMs: Int? = nil, autoFollowMs: Int? = nil,
-                sidebarVisible: Bool? = nil) {
+                sidebarVisible: Bool? = nil, sidebarMode: String? = nil, quickVisible: Bool? = nil) {
         self.workspaces = workspaces
         self.idleMs = idleMs
         self.autoFollowMs = autoFollowMs
         self.sidebarVisible = sidebarVisible
+        self.sidebarMode = sidebarMode
+        self.quickVisible = quickVisible
+    }
+}
+
+/// An open window's on-screen frame, in the SAME coordinate system `window.move`/`window.resize` accept,
+/// so a read-then-restore round-trips: `x`/`y` are the top-left relative to `display`'s top-left (y down),
+/// `width`/`height` the frame size in points, `display` the index into the screen list. The read side of
+/// the write-only `window.move`/`window.resize`.
+public struct ControlWindowFrame: Codable, Sendable, Equatable {
+    public let x: Int
+    public let y: Int
+    public let width: Int
+    public let height: Int
+    public let display: Int
+
+    public init(x: Int, y: Int, width: Int, height: Int, display: Int) {
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.display = display
     }
 }
 
@@ -359,15 +443,32 @@ public struct ControlWindowNode: Codable, Sendable, Equatable {
     /// (omitted from the JSON) — read from the open window's store, mirroring `autoFollowMs`. The read side
     /// of the write-only `sidebar` command, per window.
     public let sidebarVisible: Bool?
+    /// The window's current on-screen frame (position + size + display), or nil for a CLOSED window with no
+    /// live NSWindow (omitted from the JSON). The read side of `window.move`/`window.resize` — record it,
+    /// resize/move the window, then restore the exact frame. Read live app-side; it rides the window cache,
+    /// which is refreshed on window move/resize/zoom/fullscreen (`ControlServer` observes the NSWindow
+    /// notifications), so a hand-drag or GUI toggle is reflected without needing another command.
+    public let geometry: ControlWindowFrame?
+    /// Whether the window is in native macOS full screen, or nil for a CLOSED window (omitted from the
+    /// JSON). The read side of the write-only `window.fullscreen` toggle, so a script can make the toggle
+    /// idempotent (only enter/exit when needed). Read live app-side; like `geometry` it rides the cache.
+    public let fullscreen: Bool?
+    /// Whether the window is zoomed (maximized-to-screen, NOT full screen), or nil for a CLOSED window
+    /// (omitted from the JSON). The read side of the write-only `window.zoom` toggle. Read live app-side.
+    public let zoomed: Bool?
 
     public init(id: String, name: String, open: Bool, active: Bool, autoFollowMs: Int? = nil,
-                sidebarVisible: Bool? = nil) {
+                sidebarVisible: Bool? = nil, geometry: ControlWindowFrame? = nil,
+                fullscreen: Bool? = nil, zoomed: Bool? = nil) {
         self.id = id
         self.name = name
         self.open = open
         self.active = active
         self.autoFollowMs = autoFollowMs
         self.sidebarVisible = sidebarVisible
+        self.geometry = geometry
+        self.fullscreen = fullscreen
+        self.zoomed = zoomed
     }
 }
 
@@ -394,10 +495,18 @@ public struct ControlResult: Codable, Sendable, Equatable {
     /// The applied (clamped) left-pane split fraction echoed by `session.resize`, so a script can see
     /// where the divider landed after clamping / a relative nudge.
     public var ratio: Double?
+    /// The light/dark theme syncing state for `theme.set`/`theme.list`, derived from the stored theme
+    /// value: `sync` = whether it is ghostty's dual `light:,dark:` form (the terminal tracks the macOS
+    /// appearance), `light`/`dark` = its sides. While syncing, `theme` is absent — the state rides
+    /// these three; otherwise `theme` is the plain single theme and `light`/`dark` are absent.
+    public var sync: Bool?
+    public var light: String?
+    public var dark: String?
 
     public init(id: String? = nil, tree: ControlTree? = nil, text: String? = nil,
                 windows: [ControlWindowNode]? = nil, exitCode: Int? = nil, count: Int? = nil,
-                theme: String? = nil, themes: [String]? = nil, ratio: Double? = nil) {
+                theme: String? = nil, themes: [String]? = nil, ratio: Double? = nil,
+                sync: Bool? = nil, light: String? = nil, dark: String? = nil) {
         self.id = id
         self.tree = tree
         self.text = text
@@ -407,6 +516,9 @@ public struct ControlResult: Codable, Sendable, Equatable {
         self.theme = theme
         self.themes = themes
         self.ratio = ratio
+        self.sync = sync
+        self.light = light
+        self.dark = dark
     }
 }
 
