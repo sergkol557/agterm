@@ -127,7 +127,7 @@ struct WindowAccessor: NSViewRepresentable {
             let frontmostNames: Set<NSNotification.Name> = [NSWindow.didBecomeKeyNotification, NSWindow.didBecomeMainNotification]
             for name in [NSWindow.didBecomeKeyNotification, NSWindow.didBecomeMainNotification,
                          NSWindow.didResignKeyNotification, NSWindow.didResignMainNotification,
-                         NSWindow.didExitFullScreenNotification] {
+                         NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification] {
                 // the observer block is @Sendable, so it must not touch main-actor state
                 // directly; hop through DispatchQueue.main like the re-applies above.
                 let token = NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [windowID] notification in
@@ -151,6 +151,7 @@ struct WindowAccessor: NSViewRepresentable {
                         UserDefaults.standard.set(NSStringFromRect(window.frame), forKey: TitleProbeView.frameKey(windowID))
                     }
                     WindowRegistry.shared.unregister(windowID)
+                    store.finalizeAllPendingCloses()
                     // flush cwd drift since the last structural mutation before dropping the store —
                     // AppStore doesn't save on a live `cd`, so a closed-then-reopened window would
                     // otherwise load a stale snapshot. Skip it when the window is no longer open in the
@@ -282,7 +283,8 @@ struct WindowAccessor: NSViewRepresentable {
                 ?? NSColor(srgbRed: 0.157, green: 0.173, blue: 0.204, alpha: 1)
             WindowAppearance.sync(window: window, background: background,
                                   chrome: .init(opacity: GhosttyApp.shared.windowOpacity,
-                                                blurRadius: GhosttyApp.shared.windowBlurRadius))
+                                                blurRadius: GhosttyApp.shared.windowBlurRadius,
+                                                toolbarMode: GhosttyApp.shared.toolbarMode))
         }
     }
 }

@@ -10,10 +10,10 @@ let sessionPasteboardType = NSPasteboard.PasteboardType("com.umputun.agterm.sess
 /// drags (within the outline) use this to identify the workspace being reordered.
 let workspacePasteboardType = NSPasteboard.PasteboardType("com.umputun.agterm.workspace")
 
-/// AppKit `NSOutlineView` sidebar (source-list style) hosted in SwiftUI via
-/// `NSViewRepresentable`. Replaces the SwiftUI `List` sidebar so cross-workspace
-/// drag-and-drop works natively: a session row can be dragged onto a different
-/// workspace and the model moves it (same `Session` instance preserved).
+/// AppKit `NSOutlineView` sidebar (`.plain` style + a custom row height and top/left content insets that
+/// match the terminal's ghostty padding) hosted in SwiftUI via `NSViewRepresentable`. Replaces the
+/// SwiftUI `List` sidebar so cross-workspace drag-and-drop works natively: a session row can be dragged
+/// onto a different workspace and the model moves it (same `Session` instance preserved).
 ///
 /// Two-level tree: workspaces (expandable parents, bold) → sessions (children).
 /// Only session rows are selectable detail targets. Inline rename via double-click
@@ -31,14 +31,23 @@ struct WorkspaceSidebar: NSViewRepresentable {
         outline.dataSource = context.coordinator
         outline.delegate = context.coordinator
         outline.headerView = nil
-        outline.rowSizeStyle = .default
+        // .plain style (not .sourceList) so there is no built-in ~10px top inset above the first row (the
+        // sidebar tree runs flush below the titlebar in every toolbar mode); a custom row height restores
+        // the roomy source-list-like row size that .plain's .default would otherwise shrink to ~17px.
+        outline.rowSizeStyle = .custom
+        outline.rowHeight = 28
         outline.floatsGroupRows = false
         outline.indentationPerLevel = 14
         outline.autosaveExpandedItems = false
         outline.target = context.coordinator
         outline.action = #selector(Coordinator.handleSingleClick(_:))
         outline.doubleAction = #selector(Coordinator.handleDoubleClick(_:))
-        if #available(macOS 11.0, *) { outline.style = .sourceList }
+        if #available(macOS 11.0, *) { outline.style = .plain }
+        // .plain reverts the outline's backgroundColor to an OPAQUE controlBackgroundColor (unlike
+        // .sourceList's translucent source-list material), which would paint over the sidebar tint wash and
+        // the terminal-colored/translucent window backing. Clear it so the transparent column shows through,
+        // matching scroll.drawsBackground = false below.
+        outline.backgroundColor = .clear
         // disable AppKit's own selection drawing: it would paint a gray unemphasized capsule whenever
         // the sidebar isn't first responder (focus normally lives in the terminal). SidebarRowView
         // draws the themed selection pill itself in drawBackground for every state.
@@ -84,6 +93,8 @@ struct WorkspaceSidebar: NSViewRepresentable {
         scroll.drawsBackground = false
         scroll.borderType = .noBorder
         context.coordinator.installEmptyState(in: scroll)
+        // inset the tree to match the terminal's ghostty padding so they line up in every toolbar mode.
+        context.coordinator.applySidebarContentInset(scroll)
         return scroll
     }
 
@@ -94,7 +105,7 @@ struct WorkspaceSidebar: NSViewRepresentable {
         // lets reconcile do a targeted per-row reload for a content change; a touch inside viewFor wouldn't
         // register it. agentIndicator feeds the status-icon reconcile (it renders on every session). the
         // badge-visibility toggle (GhosttyApp.notificationBadgeEnabled) is NOT observable, so it drives a
-        // re-reconcile via the .agtermAppearanceChanged notification (appearanceChanged), like compactToolbar.
+        // re-reconcile via the .agtermAppearanceChanged notification (appearanceChanged), like toolbarMode.
         _ = store.workspaces.map { ($0.id, $0.name, $0.unseenCount, $0.sessions.map { ($0.id, $0.displayName, $0.hasSplit, $0.unseenCount, $0.agentIndicator, $0.flagged) }) }
         _ = store.selectedSessionID
         // sidebarMode flips the whole data source between the tree and the flat flagged list; reading it
@@ -220,6 +231,19 @@ struct WorkspaceSidebar: NSViewRepresentable {
             outlineView?.appearance = NSAppearance(named: GhosttyApp.shared.terminalThemeIsDark ? .darkAqua : .aqua)
         }
 
+        /// Inset the sidebar tree to line up with the terminal's DEFAULT ghostty padding (agterm/Resources/ghostty-defaults.conf;
+        /// a user window-padding override in ghostty.conf is not tracked here): window-padding-x = 8 matches
+        /// the terminal's left margin, plus a small 2px top nudge so the first
+        /// row's text sits on the terminal's first line. Most of the ~window-padding-y = 6 gap above the text
+        /// comes from the row centering its content (`centerYAnchor`) in a ~28px row; the 2px fine-tunes it (a
+        /// full 6px top inset would double it). The `.plain` outline style adds no insets of its own, so we own
+        /// them (auto-adjust off). Mode-independent — same offset in every toolbar mode.
+        func applySidebarContentInset(_ scroll: NSScrollView?) {
+            guard let scroll else { return }
+            scroll.automaticallyAdjustsContentInsets = false
+            scroll.contentInsets = NSEdgeInsets(top: 2, left: 8, bottom: 0, right: 0)
+        }
+
         @objc private func appearanceChanged() {
             refreshSelectionAppearance()
             applyThemeAppearance()
@@ -230,6 +254,9 @@ struct WorkspaceSidebar: NSViewRepresentable {
             // color change — re-apply every visible glyph so a Settings color edit takes effect live.
             reapplyStatusGlyphs()
             updateEmptyState()
+            // re-apply the sidebar content inset in case a settings change requires recomputing it (the
+            // inset itself is mode-independent, so this is a cheap re-assert, not a per-mode recalculation).
+            applySidebarContentInset(outlineView?.enclosingScrollView)
         }
 
         /// Re-apply the status glyph on every visible session row so a global agent-status color change
@@ -274,7 +301,7 @@ struct WorkspaceSidebar: NSViewRepresentable {
         /// mean no add/remove/move/reorder, so a row's content change (name/icon/badge) is handled by a
         /// targeted per-row reload instead of a full rebuild. Row TEXT is deliberately NOT here: a
         /// cwd-driven `displayName` change must not trigger a full `reloadData` + re-expand (which
-        /// re-lays-out every source-list row and jitters their labels horizontally).
+        /// re-lays-out every sidebar row and jitters their labels horizontally).
         private struct TreeShape: Equatable {
             let workspaceID: UUID
             let sessionIDs: [UUID]
