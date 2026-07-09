@@ -150,6 +150,13 @@ All five are read-only projections of GUI state.
 - `session copy [--target] [--window W]` — returns `result.text` with the session's current selection.
   Does NOT touch the system clipboard (pipe the returned text into another `session type`). No/empty
   selection → `no selection` error. Selection is readable on any realized session regardless of focus.
+- `session paste [--target] [--window W]` — paste the system clipboard (`NSPasteboard.general`) into the
+  session's main pane, the socket analogue of ⌘V / Edit ▸ Paste. Runs libghostty's `paste_from_clipboard`
+  (bracketed paste, no prompt), so the text lands at the prompt without auto-submitting. Read it back with
+  `session text`. A never-shown session → `session not realized`.
+- `session select-all [--target] [--window W]` — select the session's entire terminal buffer (main pane),
+  the socket analogue of ⌘A / Edit ▸ Select All (libghostty `select_all`). Read the resulting selection
+  back with `session copy`. A never-shown session → `session not realized`.
 - `session text [--all] [--lines N] [--pane left|right|scratch] [--target] [--window W]` — returns `result.text`
   with the session's terminal buffer as PLAIN TEXT (no ANSI/color). By default it reads the VISIBLE
   SCREEN of the on-screen pane. `--all` reads the whole buffer including scrollback; `--lines N` reads the
@@ -332,7 +339,21 @@ shell (no controlling terminal — `/dev/tty` errors). See examples.md for usage
 
 `agtermctl quick [show|hide|toggle]` — the frontmost window's quick terminal (a single scratch
 terminal at 90% of the window, not in the tree; its shell stays alive across hides). Errors with
-`no open window` when none is open.
+`no open window` when none is open. Read its visibility back from the tree's top-level `quickVisible`.
+
+`agtermctl quick type TEXT` (or `--stdin`) — inject `TEXT` as literal keystrokes into the frontmost
+window's quick terminal, the quick-terminal twin of `session type`. There is no `--target`/`--window`
+(always the frontmost window's quick terminal) and no `--pane` (a single surface). It polls briefly for
+the surface to come up, so `quick show; quick type` back-to-back is reliable (the overlay mounts a beat
+after `quick show` flips visibility). Errors with `quick terminal not open` when the overlay has never
+been shown, `quick terminal not realized` if a shown surface never comes up in time, `no open window`
+when none is open. Typing into a shown-then-hidden quick terminal still works (its shell stays alive).
+
+`agtermctl quick text [--all] [--lines N]` — print the frontmost window's quick-terminal buffer as
+plain text (the read-back for `quick type`; does not touch the system clipboard). `--all` reads the
+full screen + scrollback, `--lines N` keeps only the last N (mutually exclusive). Polls for the surface
+like `quick type`. Errors with `quick terminal not open` (never shown), `failed to read surface buffer`
+(shown surface never realized in time), `no open window`.
 
 ## sidebar
 
@@ -496,7 +517,8 @@ user-edited file read at launch — there is no control command for it.
 `invalid fit` / `invalid position` / `invalid opacity` / `invalid color` / `text too long` /
 `unsupported image (PNG or JPEG only)` / `no such image file` / `image path must not contain control characters` / `invalid background mode` (session background),
 `invalid sidebar mode` (sidebar), `invalid focus mode` (workspace focus),
-`no open window` (quick/sidebar), `window not open`
+`no open window` (quick/sidebar), `quick terminal not open` / `quick terminal not realized` (quick type) /
+`failed to read surface buffer` (quick text / session text), `window not open`
 (resize/move/`--window`), `unknown theme: <name>` (theme set), `unknown sound: <name>` (session status --sound),
 `invalid color (expected #rrggbb)` (session status --color),
 `--pane must be left, right, or scratch` (the `--pane` value check — the `agtermctl` CLI rejects a bad pane

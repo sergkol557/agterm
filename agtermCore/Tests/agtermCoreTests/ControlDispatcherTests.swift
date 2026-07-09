@@ -779,6 +779,30 @@ struct ControlDispatcherTests {
         #expect(actions.calls == [.sessionCopy(target: "session", window: nil)])
     }
 
+    @Test func sessionPasteRoutesTargetAndWindow() async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+        actions.nextSessionPasteResponse = ControlResponse(ok: true, result: ControlResult(id: "session"))
+
+        let response = await dispatcher.dispatch(ControlRequest(
+            cmd: .sessionPaste, target: "session", args: ControlArgs(window: "win")))
+
+        #expect(response == ControlResponse(ok: true, result: ControlResult(id: "session")))
+        #expect(actions.calls == [.sessionPaste(target: "session", window: "win")])
+    }
+
+    @Test func sessionSelectAllRoutesTargetAndWindow() async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+        actions.nextSessionSelectAllResponse = ControlResponse(ok: true, result: ControlResult(id: "session"))
+
+        let response = await dispatcher.dispatch(ControlRequest(
+            cmd: .sessionSelectAll, target: "session", args: ControlArgs(window: "win")))
+
+        #expect(response == ControlResponse(ok: true, result: ControlResult(id: "session")))
+        #expect(actions.calls == [.sessionSelectAll(target: "session", window: "win")])
+    }
+
     @Test func sessionOverlayOpenRejectsInvalidInputsBeforeCallingActions() async {
         let actions = MockControlActions()
         let dispatcher = ControlDispatcher(actions: actions)
@@ -1099,6 +1123,76 @@ struct ControlDispatcherTests {
         #expect(actions.calls == [.quick("maybe")])
     }
 
+    @Test func quickTypeRoutesTextAndKeepsActionResponse() async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+        actions.nextQuickTypeResponse = ControlResponse(ok: false, error: "quick terminal not open")
+
+        let response = await dispatcher.dispatch(ControlRequest(
+            cmd: .quickType,
+            args: ControlArgs(text: "hello")
+        ))
+
+        #expect(response == ControlResponse(ok: false, error: "quick terminal not open"))
+        #expect(actions.calls == [.quickType(text: "hello")])
+    }
+
+    @Test func quickTypeRequiresTextBeforeCallingActions() async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+
+        let response = await dispatcher.dispatch(ControlRequest(cmd: .quickType))
+
+        #expect(response == ControlResponse(ok: false, error: "quick.type requires text"))
+        #expect(actions.calls.isEmpty)
+    }
+
+    @Test func quickTextRoutesOptionsAndKeepsExactActionResponse() async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+        actions.nextQuickTextResponse = ControlResponse(ok: true, result: ControlResult(text: "line\n"))
+
+        let response = await dispatcher.dispatch(ControlRequest(
+            cmd: .quickText,
+            args: ControlArgs(lines: 10)
+        ))
+
+        #expect(response == ControlResponse(ok: true, result: ControlResult(text: "line\n")))
+        #expect(actions.calls == [.quickText(all: false, lines: 10)])
+    }
+
+    @Test func quickTextRoutesAllFlagOnTheSuccessPath() async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+        actions.nextQuickTextResponse = ControlResponse(ok: true, result: ControlResult(text: "full\n"))
+
+        let response = await dispatcher.dispatch(ControlRequest(
+            cmd: .quickText,
+            args: ControlArgs(all: true)
+        ))
+
+        #expect(response == ControlResponse(ok: true, result: ControlResult(text: "full\n")))
+        #expect(actions.calls == [.quickText(all: true, lines: nil)])
+    }
+
+    @Test func quickTextRejectsInvalidLineOptionsBeforeCallingActions() async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+
+        let both = await dispatcher.dispatch(ControlRequest(
+            cmd: .quickText,
+            args: ControlArgs(all: true, lines: 5)
+        ))
+        let zero = await dispatcher.dispatch(ControlRequest(
+            cmd: .quickText,
+            args: ControlArgs(lines: 0)
+        ))
+
+        #expect(both == ControlResponse(ok: false, error: "use either --all or --lines, not both"))
+        #expect(zero == ControlResponse(ok: false, error: "--lines must be greater than 0"))
+        #expect(actions.calls.isEmpty)
+    }
+
     @Test func sessionSearchRoutesRawInputsAndKeepsActionResponse() async {
         let actions = MockControlActions()
         let dispatcher = ControlDispatcher(actions: actions)
@@ -1291,8 +1385,12 @@ private final class MockControlActions: ControlActions {
         case expand(window: String?)
         case collapse(window: String?)
         case quick(String?)
+        case quickType(text: String)
+        case quickText(all: Bool, lines: Int?)
         case sessionType(target: String?, window: String?, ControlSessionTypeOptions)
         case sessionCopy(target: String?, window: String?)
+        case sessionPaste(target: String?, window: String?)
+        case sessionSelectAll(target: String?, window: String?)
         case sessionSearch(target: String?, window: String?, text: String?, to: String?)
         case overlayOpen(target: String?, window: String?, ControlSessionOverlayOpenOptions)
         case overlayClose(target: String?, window: String?)
@@ -1327,8 +1425,12 @@ private final class MockControlActions: ControlActions {
     var nextThemeSetResponse = ControlResponse(ok: true)
     var nextThemeListResponse = ControlResponse(ok: true)
     var nextQuickResponse = ControlResponse(ok: true)
+    var nextQuickTypeResponse = ControlResponse(ok: true)
+    var nextQuickTextResponse = ControlResponse(ok: true)
     var nextSessionTypeResponse = ControlResponse(ok: true)
     var nextSessionCopyResponse = ControlResponse(ok: true)
+    var nextSessionPasteResponse = ControlResponse(ok: true)
+    var nextSessionSelectAllResponse = ControlResponse(ok: true)
     var nextSessionSearchResponse = ControlResponse(ok: true)
     var nextOverlayOpenResponse = ControlResponse(ok: true)
     var nextOverlayCloseResponse = ControlResponse(ok: true)
@@ -1506,6 +1608,16 @@ private final class MockControlActions: ControlActions {
         return nextQuickResponse
     }
 
+    func typeQuick(text: String) async -> ControlResponse {
+        calls.append(.quickType(text: text))
+        return nextQuickTypeResponse
+    }
+
+    func readQuickText(all: Bool, lines: Int?) async -> ControlResponse {
+        calls.append(.quickText(all: all, lines: lines))
+        return nextQuickTextResponse
+    }
+
     func typeSession(_ target: String?, window: String?,
                      options: ControlSessionTypeOptions) async -> ControlResponse {
         calls.append(.sessionType(target: target, window: window, options))
@@ -1515,6 +1627,16 @@ private final class MockControlActions: ControlActions {
     func copySessionSelection(_ target: String?, window: String?) -> ControlResponse {
         calls.append(.sessionCopy(target: target, window: window))
         return nextSessionCopyResponse
+    }
+
+    func pasteSession(_ target: String?, window: String?) -> ControlResponse {
+        calls.append(.sessionPaste(target: target, window: window))
+        return nextSessionPasteResponse
+    }
+
+    func selectAllSession(_ target: String?, window: String?) -> ControlResponse {
+        calls.append(.sessionSelectAll(target: target, window: window))
+        return nextSessionSelectAllResponse
     }
 
     func searchSession(_ target: String?, window: String?,

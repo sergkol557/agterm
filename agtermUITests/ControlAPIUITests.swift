@@ -1,3 +1,4 @@
+import AppKit
 import Darwin
 import XCTest
 
@@ -430,6 +431,73 @@ final class ControlAPIUITests: ControlAPITestCase {
         XCTAssertEqual(response["error"] as? String, "no selection", "should report no selection: \(response)")
     }
 
+    // session.selectall selects the WHOLE buffer; session.copy is its read-back. Two markers are echoed on
+    // separate lines (separated by blank lines) and both must come back in one copied selection — a
+    // select_all that only grabbed the current line or the visible row would return just the second marker
+    // and fail. Polling for the LAST marker also proves both echoes rendered before the selection is taken.
+    func testSessionSelectAllThenCopyReturnsBuffer() throws {
+        let id = try activeSessionID()
+        let first = "SELECTALLMARKERONE", second = "SELECTALLMARKERTWO"
+        let onScreen = try pollPaneText(target: id, pane: "left", contains: second) {
+            _ = try self.sendCommand(self.typeRequest(text: "echo \(first)\n", target: id, select: false))
+            _ = try self.sendCommand(self.typeRequest(text: "printf '\\n\\n'\n", target: id, select: false))
+            _ = try self.sendCommand(self.typeRequest(text: "echo \(second)\n", target: id, select: false))
+        }
+        XCTAssertNotNil(onScreen, "both echoed markers should appear in the buffer")
+
+        let selected = try sendCommand(#"{"cmd":"session.selectall","target":"\#(id)"}"#)
+        XCTAssertEqual(selected["ok"] as? Bool, true, "session.selectall should succeed: \(selected)")
+
+        let copied = try sendCommand(#"{"cmd":"session.copy","target":"\#(id)"}"#)
+        XCTAssertEqual(copied["ok"] as? Bool, true, "session.copy after select-all should succeed: \(copied)")
+        let text = try XCTUnwrap((copied["result"] as? [String: Any])?["text"] as? String, "copy should return text")
+        XCTAssertTrue(text.contains(first), "selection should span back to the first marker, got: \(text)")
+        XCTAssertTrue(text.contains(second), "selection should include the last marker, got: \(text)")
+    }
+
+    // session.paste pastes the SYSTEM clipboard into the session (the socket analogue of ⌘V). Put a marker
+    // on NSPasteboard.general (shared across processes), paste it, and read the buffer back until the pasted
+    // text shows at the prompt.
+    func testSessionPasteInsertsClipboardText() throws {
+        let id = try activeSessionID()
+        let marker = "PASTECLIPMARKER"
+        seedPasteboard { $0.setString(marker, forType: .string) }
+
+        let found = try pollPaneText(target: id, pane: "left", contains: marker) {
+            let pasted = try self.sendCommand(#"{"cmd":"session.paste","target":"\#(id)"}"#)
+            XCTAssertEqual(pasted["ok"] as? Bool, true, "session.paste should succeed: \(pasted)")
+        }
+        XCTAssertNotNil(found, "the pasted clipboard marker should appear in the buffer")
+    }
+
+    // session.paste is UNGATED, unlike the Edit menu's Paste item (which validateMenuItem disables when the
+    // clipboard holds nothing pasteable). An empty clipboard is therefore `ok` with no buffer change, matching
+    // every other binding-action arm (font.*, search), which report success without consulting libghostty's
+    // return. Pinned so the GUI-gated / socket-ungated asymmetry can't drift unnoticed.
+    func testSessionPasteWithEmptyClipboardSucceedsWithoutChangingBuffer() throws {
+        let id = try activeSessionID()
+        seedPasteboard { _ in }  // cleared, nothing written
+
+        let before = try sendCommand(#"{"cmd":"session.text","target":"\#(id)"}"#)
+        let beforeText = (before["result"] as? [String: Any])?["text"] as? String
+
+        let pasted = try sendCommand(#"{"cmd":"session.paste","target":"\#(id)"}"#)
+        XCTAssertEqual(pasted["ok"] as? Bool, true, "session.paste on an empty clipboard should still be ok: \(pasted)")
+
+        let after = try sendCommand(#"{"cmd":"session.text","target":"\#(id)"}"#)
+        let afterText = (after["result"] as? [String: Any])?["text"] as? String
+        XCTAssertEqual(beforeText, afterText, "an empty-clipboard paste must not change the buffer")
+    }
+
+    // both new commands surface the resolver's error for an unknown target rather than silently no-opping.
+    func testSessionPasteAndSelectAllRejectUnknownTarget() throws {
+        for cmd in ["session.paste", "session.selectall"] {
+            let response = try sendCommand(#"{"cmd":"\#(cmd)","target":"deadbeef"}"#)
+            XCTAssertEqual(response["ok"] as? Bool, false, "\(cmd) with an unknown target should fail: \(response)")
+            XCTAssertNotNil(response["error"] as? String, "\(cmd) should carry an error: \(response)")
+        }
+    }
+
     // session.search over the active session's scrollback: seed the screen with repeated needle text via
     // session.type (the surface's own shell renders it), then session.search "<needle>" reports a match
     // count + the "N of M" / "M matches" display string. --next/--prev step the selection and --close exits
@@ -695,6 +763,38 @@ final class ControlAPIUITests: ControlAPITestCase {
         XCTAssertTrue(error.contains("invalid quick mode"), "should report the invalid mode, got: \(error)")
         // state must not have flipped.
         XCTAssertFalse(quick.exists, "an invalid mode must leave the quick terminal hidden")
+    }
+
+    // quick.type before the overlay has ever been shown errors (not a silent drop); once shown, a typed
+    // marker reads back off the quick terminal's own buffer via quick.text.
+    func testQuickTypeAndReadText() throws {
+        let quick = app.descendants(matching: .any).matching(identifier: "quick-terminal").firstMatch
+        XCTAssertFalse(quick.exists, "quick terminal should start hidden")
+
+        let closed = try sendCommand(#"{"cmd":"quick.type","args":{"text":"x"}}"#)
+        XCTAssertEqual(closed["ok"] as? Bool, false, "quick.type before show should fail: \(closed)")
+        XCTAssertEqual(closed["error"] as? String, "quick terminal not open", "should report the closed overlay")
+
+        // show, then IMMEDIATELY type once — no waitForExistence, no retry. The server-side realize poll
+        // must ride out the SwiftUI mount so this first post-show type lands, which is what proves the
+        // show->type race is fixed (a regression that dropped the poll would return "not realized" here).
+        let shown = try sendCommand(#"{"cmd":"quick","args":{"mode":"show"}}"#)
+        XCTAssertEqual(shown["ok"] as? Bool, true, "quick show should succeed: \(shown)")
+        let typed = try sendCommand(#"{"cmd":"quick.type","args":{"text":"QUICKPROBE"}}"#)
+        XCTAssertEqual(typed["ok"] as? Bool, true, "a single quick.type right after quick show must land via the realize poll: \(typed)")
+
+        // read the typed marker back off the quick surface, polling only for the shell echo to render (a
+        // no-newline marker, so it stays on the prompt line and never executes).
+        var readBack: String?
+        for _ in 0..<20 {
+            let response = try sendCommand(#"{"cmd":"quick.text","args":{"all":true}}"#)
+            if let text = (response["result"] as? [String: Any])?["text"] as? String, text.contains("QUICKPROBE") {
+                readBack = text
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+        }
+        XCTAssertNotNil(readBack, "quick.text should read the typed marker back")
     }
 
     // session.select by a UNIQUE prefix of a session id resolves to that session: seed two sessions with

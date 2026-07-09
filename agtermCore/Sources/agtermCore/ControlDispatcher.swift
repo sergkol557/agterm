@@ -36,8 +36,12 @@ public protocol ControlActions {
     func expandSidebar(window: String?) -> ControlResponse
     func collapseSidebar(window: String?) -> ControlResponse
     func setQuickTerminal(mode: String?) -> ControlResponse
+    func typeQuick(text: String) async -> ControlResponse
+    func readQuickText(all: Bool, lines: Int?) async -> ControlResponse
     func typeSession(_ target: String?, window: String?, options: ControlSessionTypeOptions) async -> ControlResponse
     func copySessionSelection(_ target: String?, window: String?) -> ControlResponse
+    func pasteSession(_ target: String?, window: String?) -> ControlResponse
+    func selectAllSession(_ target: String?, window: String?) -> ControlResponse
     func searchSession(_ target: String?, window: String?,
                        text: String?, to: String?) async -> ControlResponse
     func openSessionOverlay(_ target: String?, window: String?,
@@ -130,16 +134,19 @@ public struct ControlDispatcher {
                 .sessionMove, .sessionFlag, .sessionSeen, .sessionStatus:
             return dispatchSessionCommand(request)
         case .sessionSplit, .sessionScratch, .sessionFocus, .sessionResize, .sessionType,
-                .sessionCopy, .sessionSearch, .sessionOverlayOpen, .sessionOverlayClose,
-                .sessionOverlayResize, .sessionOverlayResult, .sessionBackground, .sessionText:
+                .sessionCopy, .sessionPaste, .sessionSelectAll, .sessionSearch, .sessionOverlayOpen,
+                .sessionOverlayClose, .sessionOverlayResize, .sessionOverlayResult, .sessionBackground,
+                .sessionText:
             return await dispatchSessionSurfaceCommand(request)
         case .workspaceNew, .workspaceSelect, .workspaceRename, .workspaceDelete,
                 .workspaceMove, .workspaceFocus:
             return dispatchWorkspaceCommand(request)
-        case .quick, .fontInc, .fontDec, .fontReset, .keymapReload, .configReload, .notify,
-                .themeSet, .themeList, .sidebar, .sidebarMode, .sidebarExpand,
+        case .quick, .fontInc, .fontDec, .fontReset, .keymapReload,
+                .configReload, .notify, .themeSet, .themeList, .sidebar, .sidebarMode, .sidebarExpand,
                 .sidebarCollapse, .restoreClear:
             return dispatchAppCommand(request)
+        case .quickType, .quickText:
+            return await dispatchQuickCommand(request)
         case .windowNew, .windowList, .windowSelect, .windowClose, .windowRename,
                 .windowDelete, .windowResize, .windowMove, .windowZoom, .windowFullscreen:
             return await dispatchWindowCommand(request)
@@ -309,6 +316,10 @@ public struct ControlDispatcher {
                                              ))
         case .sessionCopy:
             return actions.copySessionSelection(request.target, window: request.args?.window)
+        case .sessionPaste:
+            return actions.pasteSession(request.target, window: request.args?.window)
+        case .sessionSelectAll:
+            return actions.selectAllSession(request.target, window: request.args?.window)
         case .sessionSearch:
             return await actions.searchSession(request.target, window: request.args?.window,
                                                text: request.args?.text, to: request.args?.to)
@@ -397,6 +408,31 @@ public struct ControlDispatcher {
             return actions.clearRestoreCommands()
         default:
             preconditionFailure("unexpected app command: \(request.cmd.rawValue)")
+        }
+    }
+
+    /// The quick-terminal input/read commands, `async` because the app side polls briefly for the surface
+    /// to mount + realize after `quick show` (the twin of `session.type`/`session.text`, which are async
+    /// for the same realize-wait reason).
+    private func dispatchQuickCommand(_ request: ControlRequest) async -> ControlResponse {
+        switch request.cmd {
+        case .quickType:
+            guard let text = request.args?.text else {
+                return ControlResponse(ok: false, error: "quick.type requires text")
+            }
+            return await actions.typeQuick(text: text)
+        case .quickText:
+            let all = request.args?.all ?? false
+            let lines = request.args?.lines
+            if all, lines != nil {
+                return ControlResponse(ok: false, error: "use either --all or --lines, not both")
+            }
+            if let lines, lines <= 0 {
+                return ControlResponse(ok: false, error: "--lines must be greater than 0")
+            }
+            return await actions.readQuickText(all: all, lines: lines)
+        default:
+            preconditionFailure("unexpected quick command: \(request.cmd.rawValue)")
         }
     }
 

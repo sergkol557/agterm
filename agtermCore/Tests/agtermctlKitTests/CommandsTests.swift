@@ -336,6 +336,22 @@ struct CommandsTests {
         #expect(try request(["session", "copy", "--target", "9f3c"]) == ControlRequest(cmd: .sessionCopy, target: "9f3c"))
     }
 
+    @Test func sessionPasteDefaultsActive() throws {
+        #expect(try request(["session", "paste"]) == ControlRequest(cmd: .sessionPaste, target: "active"))
+    }
+
+    @Test func sessionPasteWithTarget() throws {
+        #expect(try request(["session", "paste", "--target", "9f3c"]) == ControlRequest(cmd: .sessionPaste, target: "9f3c"))
+    }
+
+    @Test func sessionSelectAllDefaultsActive() throws {
+        #expect(try request(["session", "select-all"]) == ControlRequest(cmd: .sessionSelectAll, target: "active"))
+    }
+
+    @Test func sessionSelectAllWithTarget() throws {
+        #expect(try request(["session", "select-all", "--target", "9f3c"]) == ControlRequest(cmd: .sessionSelectAll, target: "9f3c"))
+    }
+
     @Test func sessionTextDefaultsActive() throws {
         // bare `session text` reads the visible screen of the focused pane (no args beyond the base bag).
         #expect(try request(["session", "text"]) == ControlRequest(cmd: .sessionText, target: "active", args: ControlArgs()))
@@ -620,6 +636,43 @@ struct CommandsTests {
 
     @Test func quickShow() throws {
         #expect(try request(["quick", "show"]) == ControlRequest(cmd: .quick, args: ControlArgs(mode: "show")))
+    }
+
+    @Test func quickTypeWithText() throws {
+        #expect(try request(["quick", "type", "ls\n"]) == ControlRequest(cmd: .quickType, args: ControlArgs(text: "ls\n")))
+    }
+
+    @Test func quickTypeStdinFlagParses() throws {
+        // the --stdin flag parses (we don't call makeRequest here — it would block reading stdin).
+        let command = try Quick.TypeText.parse(["--stdin"])
+        #expect(command.stdin)
+        #expect(command.text == nil)
+    }
+
+    @Test func quickTypeWithoutTextOrStdinThrows() {
+        // "provide TEXT or --stdin" is raised in makeRequest (not validate), so it's reached via request(),
+        // which calls makeRequest, rather than parseAsRoot alone.
+        #expect(throws: (any Error).self) { try request(["quick", "type"]) }
+    }
+
+    @Test func quickTextDefaultsToVisibleScreen() throws {
+        #expect(try request(["quick", "text"]) == ControlRequest(cmd: .quickText, args: ControlArgs()))
+    }
+
+    @Test func quickTextWithAll() throws {
+        #expect(try request(["quick", "text", "--all"]) == ControlRequest(cmd: .quickText, args: ControlArgs(all: true)))
+    }
+
+    @Test func quickTextWithLines() throws {
+        #expect(try request(["quick", "text", "--lines", "50"]) == ControlRequest(cmd: .quickText, args: ControlArgs(lines: 50)))
+    }
+
+    @Test func quickTextRejectsAllWithLines() {
+        #expect(validationMessage(["quick", "text", "--all", "--lines", "10"]) == "use either --all or --lines, not both")
+    }
+
+    @Test func quickTextRejectsZeroLines() {
+        #expect(validationMessage(["quick", "text", "--lines", "0"]) == "--lines must be greater than 0")
     }
 
     @Test func sidebarDefaultsToggle() throws {

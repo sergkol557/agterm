@@ -120,7 +120,7 @@ paths:
   The skill is a REFERENCE/knowledge skill (both user-invocable via `/agterm` and model-triggered,
   `allowed-tools: Bash(agtermctl *)`; the agent-neutral `description` carries the trigger nouns since
   Codex may ignore the extra `when_to_use` field — unknown frontmatter is harmless),
-  authored at `agterm/Resources/agent-skill/` (`SKILL.md` overview + model + addressing + 53-command
+  authored at `agterm/Resources/agent-skill/` (`SKILL.md` overview + model + addressing + 57-command
   summary + the image-display helper + a troubleshooting/reporting pointer;
   `reference.md` full per-command detail + keymap format; `examples.md` agtermctl recipes;
   `troubleshooting.md` diagnosing the common problems (keymap editor, custom actions,
@@ -190,11 +190,11 @@ paths:
   exact `uuidString` (case-insensitive), or a git-style unique prefix.
   Zero prefix hits → `notFound` error, ≥2 → `ambiguous` error listing the candidates.
   `--target` defaults to `active`, so scripts rarely type an id and never for "the current one".
-- **Command catalog (53 commands):**
+- **Command catalog (57 commands):**
   - `tree`
   - `workspace.new`/`workspace.rename`/`workspace.delete`/`workspace.select`/`workspace.move`/`workspace.focus`
-  - `session.new`/`session.close`/`session.select`/`session.rename`/`session.move`/`session.type`/`session.split`/`session.scratch`/`session.focus`/`session.resize`/`session.go`/`session.copy`/`session.text`/`session.search`/`session.status`/`session.flag`/`session.seen`/`session.background`/`session.overlay.open`/`session.overlay.close`/`session.overlay.resize`/`session.overlay.result`
-  - `quick`
+  - `session.new`/`session.close`/`session.select`/`session.rename`/`session.move`/`session.type`/`session.split`/`session.scratch`/`session.focus`/`session.resize`/`session.go`/`session.copy`/`session.paste`/`session.selectall`/`session.text`/`session.search`/`session.status`/`session.flag`/`session.seen`/`session.background`/`session.overlay.open`/`session.overlay.close`/`session.overlay.resize`/`session.overlay.result`
+  - `quick`/`quick.type`/`quick.text`
   - `sidebar`/`sidebar.mode`/`sidebar.expand`/`sidebar.collapse`
   - `notify`
   - `font.inc`/`font.dec`/`font.reset`
@@ -216,7 +216,7 @@ paths:
   Setting echoes the resulting effective side in `result.text`; the BARE form (no name) reads the side
   the last config feed applied (`SettingsModel.lastAppliedIsDark`), which the test polls to prove the
   flip actually drove the reload.
-  `AppearanceFlipUITests` is its only consumer; the public command count stays 53.
+  `AppearanceFlipUITests` is its only consumer; the public command count stays 57.
 
   `workspace.delete` honors keep-at-least-one and returns an error instead of the GUI confirm alert (nothing
   blocks on a modal).
@@ -405,6 +405,87 @@ paths:
   — it does NOT touch the system clipboard (automation pipes the returned text into another `session.type`);
   selection is surface state independent of focus, so any realized session can be read,
   and no/empty selection is a `no selection` error.
+  `session.paste` pastes the SYSTEM clipboard (`NSPasteboard.general`) into the target session's MAIN
+  surface — the socket analogue of ⌘V / Edit ▸ Paste.
+  `session.selectall` selects the target's ENTIRE terminal buffer (main surface) — the analogue of ⌘A /
+  Edit ▸ Select All.
+  Both run a libghostty binding action on the resolved surface — `paste_from_clipboard` /
+  `select_all` — through the SAME `ControlServer+SurfaceIO.surfaceBindingAction` helper the `font.*` arms
+  use (resolve session → guard the surface is realized, `session not realized` otherwise → `performBindingAction`
+  → return the id), so paste takes the normal libghostty paste path (bracketed paste, PASTE requests are
+  ungated so no OSC-52 prompt) and select_all covers the whole grid.
+  They are the control half of the GUI Edit menu: agterm keeps the STANDARD SwiftUI Edit menu and
+  implements `copy:`/`paste:`/`selectAll:` + `validateMenuItem:` on `GhosttySurfaceView` (`+Input.swift`,
+  conforming to `NSMenuItemValidation`) so AppKit's automatic menu enabling routes Copy/Paste/Select All
+  to the terminal when it holds first responder — Copy enabled on `ghostty_surface_has_selection`, Paste
+  on `GhosttyCallbacks.hasPasteboardText()`, Select All on a realized surface (all three also require
+  the surface, since `performBindingAction` no-ops without one) — while a focused text field (rename/palette/Settings)
+  keeps its own editing (its field editor wins the responder chain), and Cut stays disabled for the terminal
+  (deliberately NOT implemented) yet works in text fields.
+  **Cut cannot be dropped on its own** — SwiftUI puts Cut/Copy/Paste/Delete/Select All in ONE `.pasteboard`
+  `CommandGroup`, and replacing that group is what would take ⌘C/⌘V/⌘A away from the rename/palette/Settings
+  fields.
+  **Undo/Redo ARE dropped** (`CommandGroup(replacing: .undoRedo) {}` in `agtermApp+Menus.swift`): they are
+  their own group, agterm registers no `NSUndoManager`, and their advertised ⌘Z is already owned by File ▸
+  Reopen Closed Item (`BuiltinAction.undoClose`), whose menu precedes Edit and wins the key-equivalent search —
+  so Edit ▸ Undo could only ever be CLICKED, never invoked by its own shortcut.
+  AppKit did enable it for the sidebar's inline rename field (whose field editor supplies an undo manager),
+  but a permanently-greyed item that duplicates another menu's shortcut for one narrow case is worse than no
+  item; `EditMenuUITests.testEditMenuHasNoUndoOrRedoItems` asserts NON-EXISTENCE (an `isEnabled == false`
+  check would pass vacuously on a missing element).
+  **Paste MUST validate with the same branches the paste path reads**, and must agree with it in BOTH
+  directions.
+  Two ways to get this wrong, both found in review:
+  a `canReadObject([NSString])` probe greys the item out for a Finder file copy (a file URL with NO string
+  representation, which `pasteboardText` turns into a shell-escaped path) while ⌘V pastes the path anyway;
+  and a `canReadObject([NSURL])` probe is a TYPE check, so a pasteboard merely DECLARING `public.file-url`
+  with no usable value enables Paste while the reader returns nil and the paste inserts nothing.
+  Either direction reintroduces the menu-vs-keyboard divergence these responders exist to remove.
+  So `hasPasteboardText` runs the reader's own URL branch, short-circuiting on the first usable URL
+  (`contains(where:)`) instead of mapping/escaping/joining the whole clipboard — validation fires on every
+  menu open and every ⌘V key-equivalent lookup, so it must not materialize a Finder copy of thousands of files.
+  Both share the single `urlText` helper so they cannot drift.
+  **Keep the predicate and the reader in step; this invariant has NO automated test** (verified instead with a
+  named-pasteboard probe across the empty / plain-text / empty-string / whitespace / file-url / web-url /
+  multi-url / declared-without-data shapes).
+  The file-URL case is NOT XCUITest-able: the runner is sandboxed (`com.apple.security.app-sandbox`), so a file
+  URL it writes to `NSPasteboard.general` never becomes visible to the app — instrumenting `hasPasteboardText`
+  showed the app reading `types=[]` for a full 8 s poll while the runner's own `canReadObject([NSURL])` returned
+  true from its in-process cache.
+  Such a test exercises the sandbox, not `validateMenuItem`, so it was removed rather than left red (verified
+  instead with a cross-process probe outside the runner).
+  Do not re-add it without an app-target `bundle.unit-test` (the project has only `bundle.ui-testing` today),
+  which could exercise `hasPasteboardText` against a NAMED pasteboard in-process.
+  A `NSPasteboard.general` read in the app also LAGS a writer process's `changeCount`, so any UI test that seeds
+  the clipboard must POLL rather than read once.
+  ⌘C/⌘V/⌘A therefore route through the Edit menu (fixed standard shortcuts, NOT rebindable — the maintainer's
+  call); the `ghostty-defaults.conf` `super+key_c`/`super+key_v`/`super+key_a` binds stay as a non-Latin-layout
+  backup.
+  The mechanism is that AppKit matches a menu key equivalent against the character the layout PRODUCES: on a
+  Cyrillic layout ⌘C yields `с`, no equivalent matches, the event reaches `keyDown` and the keycode-triggered
+  `super+key_c` fires. (A DISABLED item likewise doesn't consume its equivalent, so ⌘C with no selection also
+  falls through.) There is no AppKit "Latin fallback" doing this — the binds are load-bearing, not dead code.
+  **`super+key_a=select_all` is one of them**: without it ⌘A silently does nothing on a Cyrillic/Greek layout,
+  since libghostty's built-in `super+a` is character-matched too (found in review — the fallback set must cover
+  every shortcut the Edit menu owns, not just copy/paste).
+  **The session-scoped surface arms resolve `Session.addressableSurface`, not `Session.surface`.**
+  `session.copy`/`session.paste`/`session.selectall`/`font.*` act on "the session" rather than a named `--pane`,
+  and `addressableSurface` is `surface ?? splitSurface`: identical to `surface` for every ordinary or split
+  session, but falling back to a PROMOTED SPLIT SURVIVOR whose primary shell exited (`closePrimaryPane` nils
+  `surface` and keeps the live shell in `splitSurface`, asserted by `AppStorePaneTests`).
+  Resolving through `surface` alone returned `session not realized` for a session the user was actively typing
+  in. It is deliberately NOT focus-aware (unlike `activeSurface`) — a shown split keeps addressing the main
+  pane, which is what keeps `session.selectall` and its `session.copy` read-back on the SAME surface.
+  READ-BACK: neither adds a `ControlSessionNode` field — `session.selectall`'s read-back is `session.copy`
+  (reads the resulting selection) and `session.paste`'s is `session.text` (reads the inserted buffer), the
+  sibling-command pattern (like `quick.type`↔`quick.text`).
+  Four-point keep-in-sync audit: (1) `case sessionPaste = "session.paste"` + `case sessionSelectAll = "session.selectall"`
+  in `ControlProtocol.swift` (no new args/fields), (2) the `.sessionPaste`/`.sessionSelectAll` arms in
+  `ControlDispatcher.dispatchSessionSurfaceCommand` → `ControlActions.pasteSession`/`selectAllSession`
+  (app-side `ControlServer+SurfaceIO`), (3) the `session paste` / `session select-all` subcommands in
+  `agtermctlKit`, (4) round-trip in `ControlProtocolTests` + dispatcher routing in `ControlDispatcherTests`
+  + CLI mapping in `CommandsTests` + the e2e `testSessionSelectAllThenCopyReturnsBuffer` /
+  `testSessionPasteInsertsClipboardText` in `ControlAPIUITests`.
   `session.text` reads the target surface's screen buffer as PLAIN TEXT (no ANSI) via `GhosttySurfaceView.readScreenText(all:lines:)`
   (a `ghostty_selection_s` spanning VIEWPORT top-left→bottom-right by default,
   SCREEN when `args.all || args.lines != nil`, `rectangle = false`;
@@ -592,6 +673,23 @@ paths:
   Threaded as a `quickVisible: () -> Bool?` closure on `AppStore.controlTree` (defaulting nil for host-free
   tests), covered by `treeRoundTripsWithQuickVisible`/`treeOmitsQuickVisibleWhenNil` +
   `AppStoreTests.controlTreeReportsQuickVisibleFromClosure`; the app-side `QuickTerminalRegistry` read is build-verified.
+  `quick.type`/`quick.text` are the input/read-back pair for the quick terminal, the twins of `session.type`/`session.text`
+  (the quick terminal is the one typing surface the socket couldn't reach before — issue #170).
+  Both are frontmost-window-only (no `--target`/`--window`/`--pane`; the quick terminal is a single per-window surface),
+  dispatcher-owned via `ControlActions.typeQuick(text:)` / `readQuickText(all:lines:)` (both `async`), and inject/read
+  through the same `GhosttySurfaceView.inject(text:)` / `readScreenText(all:lines:)` primitives the session commands use.
+  They are `async` because `quick show` flips `isVisible` before SwiftUI mounts + libghostty realizes the surface, so
+  a bounded main-actor poll (12×30 ms, the `session.type` realize-poll pattern) waits out the mount — `quick show; quick
+  type` back-to-back is reliable rather than racing.
+  Fast-fail when NOT racing: `quick terminal not open` when the overlay has never been shown (no surface AND not visible,
+  so the poll returns at once), `quick terminal not realized` / `failed to read surface buffer` if a shown surface never
+  comes up within the poll, `no open window` when there is no window.
+  A shown-then-hidden quick terminal keeps its surface alive, so it types/reads while hidden (like `session.type --pane
+  scratch`).
+  `quick.text` is the read-back for `quick.type` (there is no NEW tree-node field — you read via the sibling `text`
+  command, exactly as `session.text` reads back `session.type`).
+  Covered by the `quickType*`/`quickText*` `ControlDispatcherTests` + the e2e `testQuickTypeAndReadText`
+  (type a marker, read it back off the quick surface).
   `session.status` flags a per-session agent status on the sidebar row — `args.status` is `idle`|`active`|`completed`|`blocked`
   (`AgentStatus(rawValue:)` → an `invalid status` error on anything else),
   `args.blink` pulses the glyph, and `args.autoReset` (status-agnostic, caller-set,
@@ -967,5 +1065,5 @@ paths:
   (image/text/color set/clear + tree read-back).
   **Agent-skill mirror (HARD keep-in-sync, 4th surface):** all commands are documented in the bundled
   `agterm/Resources/agent-skill/` (SKILL.md summary, reference.md detail,
-  examples.md recipes) and the command count there is bumped to 53 to match.
+  examples.md recipes) and the command count there is bumped to 57 to match.
 
