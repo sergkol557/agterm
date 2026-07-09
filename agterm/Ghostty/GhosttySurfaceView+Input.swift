@@ -443,3 +443,49 @@ extension GhosttySurfaceView: @preconcurrency NSTextInputClient {
         }
     }
 }
+
+// MARK: - Standard Edit menu (responder chain)
+
+/// The stock Edit ▸ Copy/Paste/Select All actions, implemented on the surface so AppKit's automatic menu
+/// enabling routes them to the terminal when it holds first responder — while a focused text field (inline
+/// rename, palette search, Settings) keeps its own `copy:`/`paste:`/`selectAll:` because its field editor
+/// wins the responder chain. This is why agterm keeps the standard SwiftUI Edit menu instead of a custom
+/// Commands group. Each action runs the same libghostty binding ⌘C/⌘V/⌘A use. Cut is deliberately NOT
+/// implemented here, so it stays disabled for the terminal (nothing to cut) yet still works in text fields;
+/// it cannot be dropped on its own, sharing SwiftUI's `.pasteboard` group with Copy/Paste/Select All.
+/// Undo/Redo are removed from the menu entirely (`CommandGroup(replacing: .undoRedo)` in `agtermApp+Menus`).
+extension GhosttySurfaceView: NSMenuItemValidation {
+    @objc func copy(_ sender: Any?) { performBindingAction("copy_to_clipboard") }
+
+    @objc func paste(_ sender: Any?) { performBindingAction("paste_from_clipboard") }
+
+    /// `override` because `selectAll(_:)` is declared on `NSResponder`, unlike `copy:`/`paste:`.
+    override func selectAll(_ sender: Any?) { performBindingAction("select_all") }
+
+    /// Gate the three items on real availability: Copy needs a selection, Paste needs something the paste
+    /// path can actually insert, Select All needs a realized surface. All three require a realized surface,
+    /// since `performBindingAction` no-ops without one. Items we don't own enable by default (AppKit only
+    /// consults this on the responder that implements the action, so `cut:` never reaches it).
+    ///
+    /// Paste asks `GhosttyCallbacks.hasPasteboardText()`, which runs the same branches as `pasteboardText` —
+    /// the SAME reader `paste_from_clipboard` ends up using — rather than probing for a plain string. The
+    /// clipboard may hold a file/web URL with no string representation (a Finder copy), which that reader
+    /// turns into a shell-escaped path: probing for `NSString` alone reports "nothing to paste" while ⌘V
+    /// happily pastes the path, which is exactly the menu-vs-keyboard divergence these responder methods
+    /// exist to remove. A bare `canReadObject([NSURL])` TYPE probe is wrong the other way, enabling Paste for a
+    /// pasteboard that only declares a URL type. The gate short-circuits on the first usable URL, so it never
+    /// escapes and joins a whole Finder copy just to answer yes/no.
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(copy(_:)):
+            guard let surface else { return false }
+            return ghostty_surface_has_selection(surface)
+        case #selector(paste(_:)):
+            return surface != nil && GhosttyCallbacks.hasPasteboardText()
+        case #selector(selectAll(_:)):
+            return surface != nil
+        default:
+            return true
+        }
+    }
+}

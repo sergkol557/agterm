@@ -1,3 +1,4 @@
+import AppKit
 import Darwin
 import XCTest
 
@@ -428,6 +429,73 @@ final class ControlAPIUITests: ControlAPITestCase {
         let response = try sendCommand(#"{"cmd":"session.copy","target":"\#(newID)"}"#)
         XCTAssertEqual(response["ok"] as? Bool, false, "copy with no selection should fail: \(response)")
         XCTAssertEqual(response["error"] as? String, "no selection", "should report no selection: \(response)")
+    }
+
+    // session.selectall selects the WHOLE buffer; session.copy is its read-back. Two markers are echoed on
+    // separate lines (separated by blank lines) and both must come back in one copied selection — a
+    // select_all that only grabbed the current line or the visible row would return just the second marker
+    // and fail. Polling for the LAST marker also proves both echoes rendered before the selection is taken.
+    func testSessionSelectAllThenCopyReturnsBuffer() throws {
+        let id = try activeSessionID()
+        let first = "SELECTALLMARKERONE", second = "SELECTALLMARKERTWO"
+        let onScreen = try pollPaneText(target: id, pane: "left", contains: second) {
+            _ = try self.sendCommand(self.typeRequest(text: "echo \(first)\n", target: id, select: false))
+            _ = try self.sendCommand(self.typeRequest(text: "printf '\\n\\n'\n", target: id, select: false))
+            _ = try self.sendCommand(self.typeRequest(text: "echo \(second)\n", target: id, select: false))
+        }
+        XCTAssertNotNil(onScreen, "both echoed markers should appear in the buffer")
+
+        let selected = try sendCommand(#"{"cmd":"session.selectall","target":"\#(id)"}"#)
+        XCTAssertEqual(selected["ok"] as? Bool, true, "session.selectall should succeed: \(selected)")
+
+        let copied = try sendCommand(#"{"cmd":"session.copy","target":"\#(id)"}"#)
+        XCTAssertEqual(copied["ok"] as? Bool, true, "session.copy after select-all should succeed: \(copied)")
+        let text = try XCTUnwrap((copied["result"] as? [String: Any])?["text"] as? String, "copy should return text")
+        XCTAssertTrue(text.contains(first), "selection should span back to the first marker, got: \(text)")
+        XCTAssertTrue(text.contains(second), "selection should include the last marker, got: \(text)")
+    }
+
+    // session.paste pastes the SYSTEM clipboard into the session (the socket analogue of ⌘V). Put a marker
+    // on NSPasteboard.general (shared across processes), paste it, and read the buffer back until the pasted
+    // text shows at the prompt.
+    func testSessionPasteInsertsClipboardText() throws {
+        let id = try activeSessionID()
+        let marker = "PASTECLIPMARKER"
+        seedPasteboard { $0.setString(marker, forType: .string) }
+
+        let found = try pollPaneText(target: id, pane: "left", contains: marker) {
+            let pasted = try self.sendCommand(#"{"cmd":"session.paste","target":"\#(id)"}"#)
+            XCTAssertEqual(pasted["ok"] as? Bool, true, "session.paste should succeed: \(pasted)")
+        }
+        XCTAssertNotNil(found, "the pasted clipboard marker should appear in the buffer")
+    }
+
+    // session.paste is UNGATED, unlike the Edit menu's Paste item (which validateMenuItem disables when the
+    // clipboard holds nothing pasteable). An empty clipboard is therefore `ok` with no buffer change, matching
+    // every other binding-action arm (font.*, search), which report success without consulting libghostty's
+    // return. Pinned so the GUI-gated / socket-ungated asymmetry can't drift unnoticed.
+    func testSessionPasteWithEmptyClipboardSucceedsWithoutChangingBuffer() throws {
+        let id = try activeSessionID()
+        seedPasteboard { _ in }  // cleared, nothing written
+
+        let before = try sendCommand(#"{"cmd":"session.text","target":"\#(id)"}"#)
+        let beforeText = (before["result"] as? [String: Any])?["text"] as? String
+
+        let pasted = try sendCommand(#"{"cmd":"session.paste","target":"\#(id)"}"#)
+        XCTAssertEqual(pasted["ok"] as? Bool, true, "session.paste on an empty clipboard should still be ok: \(pasted)")
+
+        let after = try sendCommand(#"{"cmd":"session.text","target":"\#(id)"}"#)
+        let afterText = (after["result"] as? [String: Any])?["text"] as? String
+        XCTAssertEqual(beforeText, afterText, "an empty-clipboard paste must not change the buffer")
+    }
+
+    // both new commands surface the resolver's error for an unknown target rather than silently no-opping.
+    func testSessionPasteAndSelectAllRejectUnknownTarget() throws {
+        for cmd in ["session.paste", "session.selectall"] {
+            let response = try sendCommand(#"{"cmd":"\#(cmd)","target":"deadbeef"}"#)
+            XCTAssertEqual(response["ok"] as? Bool, false, "\(cmd) with an unknown target should fail: \(response)")
+            XCTAssertNotNil(response["error"] as? String, "\(cmd) should carry an error: \(response)")
+        }
     }
 
     // session.search over the active session's scrollback: seed the screen with repeated needle text via
