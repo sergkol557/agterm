@@ -216,7 +216,9 @@ struct agtermApp: App {
             store.closePrimaryPane(sessionID)
             // focus the surviving (now maximized) pane; if the whole (single) session closed instead,
             // focus the session it reselected to. the collapse/switch re-hosts the target, so use the retry.
-            let target = store.session(withID: sessionID)?.activeSurface ?? store.activeSession?.activeSurface
+            // resolve through `topmostSurface`, so a pane exiting under an overlay or scratch hands focus to
+            // the cover on top rather than to the pane it hides.
+            let target = store.session(withID: sessionID)?.topmostSurface ?? store.activeSession?.topmostSurface
             (target as? GhosttySurfaceView)?.focusAfterReparent()
         }
         view.onFocusChange = { focused in
@@ -296,15 +298,15 @@ struct agtermApp: App {
     }
 
     /// Wire the pane-scoped keystroke-clear: `keyDown` fires `onUserInputClearsStatus` unconditionally, and
-    /// this closure clears the status back to idle ONLY when the host-free `AgentIndicator.clearedBy(pane:isEscape:)`
+    /// this closure clears the status back to idle ONLY when the host-free `AgentIndicator.clearedBy(pane:isInterrupt:)`
     /// says the keystroke's OWN pane owns the current status — so a block set from a background pane survives
     /// foreground typing in another pane. Wired by all three surface factories with only the pane differing
     /// (main=`.left`, split=`.right`, scratch=`.scratch`), like `wireSearchCallbacks`; the scratch has no
     /// `view.session`, so the decision must live in this closure rather than `keyDown`.
     @MainActor
     private static func wireStatusClear(_ view: GhosttySurfaceView, store: AppStore, sessionID: UUID, pane: StatusPane) {
-        view.onUserInputClearsStatus = { isEscape in
-            if store.session(withID: sessionID)?.agentIndicator.clearedBy(pane: pane, isEscape: isEscape) == true {
+        view.onUserInputClearsStatus = { isInterrupt in
+            if store.session(withID: sessionID)?.agentIndicator.clearedBy(pane: pane, isInterrupt: isInterrupt) == true {
                 store.setAgentIndicator(AgentIndicator(), forSession: sessionID)
             }
         }
@@ -334,7 +336,9 @@ struct agtermApp: App {
             store.closeSplitPane(sessionID)
             // focus the surviving (now maximized) pane; if the whole session closed (primary already
             // exited), focus the session it reselected to. the collapse/switch re-hosts it, so retry.
-            let target = store.session(withID: sessionID)?.activeSurface ?? store.activeSession?.activeSurface
+            // resolve through `topmostSurface`, so a pane exiting under an overlay or scratch hands focus to
+            // the cover on top rather than to the pane it hides.
+            let target = store.session(withID: sessionID)?.topmostSurface ?? store.activeSession?.topmostSurface
             (target as? GhosttySurfaceView)?.focusAfterReparent()
         }
         view.onFocusChange = { focused in

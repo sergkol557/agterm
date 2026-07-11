@@ -653,12 +653,17 @@ struct WorkspaceSidebar: NSViewRepresentable {
         /// attached to the window yet (a just-selected session's view is still
         /// materializing), so retry on the run loop until it is, with a bounded cap.
         /// Skipped while a rename field is the first responder or an edit is in progress.
+        ///
+        /// Targets `topmostSurface` (overlay, else scratch, else the active pane) rather than the main
+        /// `surface`: while a cover is up it owns the keyboard, so focusing a pane instead would starve the
+        /// overlay/scratch program of input — and a full overlay or scratch also hides the pane, so the
+        /// keystrokes would land on a surface the user cannot see.
         func focusActiveTerminal(attempt: Int = 0) {
             // never steal focus from an in-progress rename.
             if renameController.isEditing { return }
             let window = outlineView?.window
             if let window, window.firstResponder is NSText { return }
-            if let window, let surface = store.activeSession?.surface as? GhosttySurfaceView, surface.window === window {
+            if let window, let surface = store.activeSession?.topmostSurface as? GhosttySurfaceView, surface.window === window {
                 window.makeFirstResponder(surface)
                 return
             }
