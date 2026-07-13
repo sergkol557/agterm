@@ -450,6 +450,24 @@ Restore reconstructs the structure, not the running processes. Three limitations
 2. The saved working directory depends on the `GHOSTTY_ACTION_PWD` callback, which only fires when the shell has Ghostty shell-integration / OSC 7 active (auto-injected for zsh, bash, fish, and nu when the shell-integration resources are present). If the working directory is never reported, a session restores to the directory it was created in.
 3. The live working directory is persisted on quit and on every structural change (adding, closing, moving, renaming, or selecting a session), but not on every `cd` — OSC 7 fires on each prompt redraw, so saving each one would thrash the disk. A crash or force-quit therefore loses only the working-directory changes made since the last structural change or quit.
 
+## Related projects
+
+A small ecosystem has grown around agterm. These are independent projects, not maintained here.
+
+**Built on agterm**
+
+- [agterm-linux](https://github.com/melonamin/agterm-linux) by [@melonamin](https://github.com/melonamin) is a Linux port (GTK4/libadwaita) built on the shared, host-free `agtermCore`. The macOS app stays here; the Linux frontend lives in that fork.
+
+**Reimplementation**
+
+- [agwinterm](https://github.com/yeroo/agwinterm) by [@yeroo](https://github.com/yeroo) is a native Windows terminal for AI coding agents (C#, Win32/Direct2D), an independent from-scratch homage to agterm's design.
+
+**Companion tools**
+
+- [agterm-remote](https://github.com/k0nsta/agterm-remote) carries agterm's agent-status colors and pushes to agents running in a remote tmux over SSH.
+- [pi-agterm](https://github.com/khanton/pi-agterm) is a pi extension that reports agent status onto agterm's status indicator.
+- [agterm-experimental](https://github.com/rashpile/agterm-experimental) collects custom skills and scripts for agterm.
+
 ## Attribution
 
 agterm embeds **libghostty**, the terminal engine from [Ghostty](https://github.com/ghostty-org/ghostty) (MIT). It does all the real terminal work: rendering, VT parsing, and shell I/O. agterm builds it from upstream source at a pinned commit via `scripts/setup.sh`, with no fork and no prebuilt binary.
