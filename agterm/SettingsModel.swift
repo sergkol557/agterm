@@ -74,6 +74,8 @@ final class SettingsModel {
         applyNotificationBadgeEnabled()
         applyInactivePaneMute()
         applySidebarBackgroundShift()
+        applySidebarFontSize()
+        applyBaseFontSize()
         applyAgentStatusColors()
         applyRestoreRunningCommand()
         applyAttentionButtonEnabled()
@@ -95,6 +97,10 @@ final class SettingsModel {
             MainActor.assumeIsolated { self?.appearanceChanged(isDark: isDark) }
         }
     }
+
+    /// The frontmost session's focused-pane cwd, used only to seed directory-picking panels near the
+    /// user's current work. Settings views still mutate through this model; they don't need library access.
+    var activeSessionCwd: String? { library.activeStore?.activeSession?.focusedCwd }
 
     /// The appearance side the last config feed applied, used to suppress redundant re-posts of
     /// `.agtermSystemAppearanceChanged` on the same side (KVO `[.initial]` seeds one at launch, and the
@@ -222,6 +228,7 @@ final class SettingsModel {
     func setRightClickPaste(_ value: Bool?) { settings.rightClickPaste = value; persistAndApply() }
     func setInactivePaneMuteStrength(_ value: Int?) { settings.inactivePaneMuteStrength = value; persistAndApply() }
     func setSidebarBackgroundShift(_ value: Int?) { settings.sidebarBackgroundShift = value; persistAndApply() }
+    func setSidebarFontSize(_ value: Double?) { settings.sidebarFontSize = value; persistAndApply() }
     // not a ghostty key, so persistAndApply()'s writeGhosttyConfig() no-ops and no surface reload fires.
     func setRestoreRunningCommand(_ value: Bool?) { settings.restoreRunningCommand = value; persistAndApply() }
     // chrome flag, not a ghostty key: persistAndApply() no-ops the config but rides .agtermAppearanceChanged.
@@ -628,6 +635,8 @@ final class SettingsModel {
         applyNotificationBadgeEnabled()
         applyInactivePaneMute()
         applySidebarBackgroundShift()
+        applySidebarFontSize()
+        applyBaseFontSize()
         applyAgentStatusColors()
         applyRestoreRunningCommand()
         applyAttentionButtonEnabled()
@@ -690,6 +699,14 @@ final class SettingsModel {
     private func applySidebarBackgroundShift() {
         GhosttyApp.shared.setSidebarBackgroundShift(
             settings.sidebarBackgroundShift ?? AppSettings.defaultSidebarBackgroundShift)
+    }
+
+    private func applySidebarFontSize() {
+        GhosttyApp.shared.setSidebarFontSize(settings.sidebarFontSize ?? AppSettings.defaultSidebarFontSize)
+    }
+
+    private func applyBaseFontSize() {
+        GhosttyApp.shared.setBaseFontSize(settings.fontSize)
     }
 
     private func applyAgentStatusColors() {

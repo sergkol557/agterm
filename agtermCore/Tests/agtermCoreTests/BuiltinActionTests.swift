@@ -13,6 +13,7 @@ struct BuiltinActionTests {
         // spot-check the documented raw names so a rename can't drift silently.
         #expect(BuiltinAction.newWindow.rawValue == "new_window")
         #expect(BuiltinAction.toggleSplit.rawValue == "toggle_split")
+        #expect(BuiltinAction.toggleTerminalZoom.rawValue == "toggle_terminal_zoom")
         #expect(BuiltinAction.toggleSearch.rawValue == "toggle_search")
         #expect(BuiltinAction.commandPalette.rawValue == "command_palette")
         #expect(BuiltinAction.customCommandPalette.rawValue == "custom_command_palette")
@@ -26,7 +27,8 @@ struct BuiltinActionTests {
         #expect(BuiltinAction.reopenRecent.rawValue == "reopen_recent")
         #expect(BuiltinAction.undoClose.rawValue == "undo_close")
         #expect(BuiltinAction.toggleFullscreen.rawValue == "toggle_fullscreen")
-        #expect(BuiltinAction.allCases.count == 38)
+        #expect(BuiltinAction.dashboard.rawValue == "dashboard")
+        #expect(BuiltinAction.allCases.count == 40)
     }
 
     @Test func rejectsUnknownName() {
@@ -73,6 +75,7 @@ struct BuiltinActionTests {
             .resetFontSize: Chord(mods: [.command], key: "0"),
             .toggleSplit: Chord(mods: [.command], key: "d"),
             .toggleScratch: Chord(mods: [.command], key: "j"),
+            .toggleTerminalZoom: Chord(mods: [.command, .shift], key: "return"),
             .toggleSearch: Chord(mods: [.command], key: "f"),
             .toggleSidebar: Chord(mods: [.command, .control], key: "s"),
             .toggleFullscreen: Chord(mods: [.command, .control], key: "f"),
@@ -93,6 +96,7 @@ struct BuiltinActionTests {
             .commandPalette: Chord(mods: [.control, .shift], key: "p"),
             .customCommandPalette: Chord(mods: [.control, .shift], key: "o"),
             .showAttention: Chord(mods: [.control, .shift], key: "i"),
+            .dashboard: Chord(mods: [.command, .shift], key: "d"),
         ]
         // the table must cover every case so a new action can't be added without a documented default.
         #expect(expected.count == BuiltinAction.allCases.count)

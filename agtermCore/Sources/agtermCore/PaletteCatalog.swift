@@ -39,8 +39,8 @@ public enum PaletteCommand: String, CaseIterable, Sendable {
     case renameSession, renameWorkspace, closeSession, reopenRecent, undoClose, clearStatus
     case previousSession, nextSession, previousAttentionSession, nextAttentionSession
     case firstSession, lastSession, showAttention
-    case toggleSplit, toggleScratch, toggleSidebar, toggleFlag, focusWorkspace
-    case find, quickTerminal, toggleFullscreen
+    case toggleSplit, toggleScratch, toggleTerminalZoom, toggleSidebar, toggleFlag, focusWorkspace
+    case find, quickTerminal, dashboard, toggleFullscreen
     case increaseFontSize, decreaseFontSize, resetFontSize, selectTheme
     case editKeymap, reloadKeymap, editGhosttyConfig, reloadConfig
     case deleteWorkspace, toggleFlaggedView, clearFlagged, clearFocus
@@ -93,11 +93,13 @@ public enum PaletteCommand: String, CaseIterable, Sendable {
         case .showAttention: return "Show Attention"
         case .toggleSplit: return "Toggle Split"
         case .toggleScratch: return "Toggle Scratch"
+        case .toggleTerminalZoom: return "Toggle Terminal Zoom"
         case .toggleSidebar: return "Toggle Sidebar"
         case .toggleFlag: return context.activeSessionFlagged ? "Unflag Session" : "Flag Session"
         case .focusWorkspace: return "Focus Workspace"
         case .find: return "Find…"
         case .quickTerminal: return "Quick Terminal"
+        case .dashboard: return "Dashboard"
         case .toggleFullscreen: return "Toggle Full Screen"
         case .increaseFontSize: return "Increase Font Size"
         case .decreaseFontSize: return "Decrease Font Size"
@@ -138,11 +140,13 @@ public enum PaletteCommand: String, CaseIterable, Sendable {
         case .showAttention: return .showAttention
         case .toggleSplit: return .toggleSplit
         case .toggleScratch: return .toggleScratch
+        case .toggleTerminalZoom: return .toggleTerminalZoom
         case .toggleSidebar: return .toggleSidebar
         case .toggleFlag: return .toggleFlag
         case .focusWorkspace: return .focusWorkspace
         case .find: return .toggleSearch
         case .quickTerminal: return .quickTerminal
+        case .dashboard: return .dashboard
         case .toggleFullscreen: return .toggleFullscreen
         case .increaseFontSize: return .increaseFontSize
         case .decreaseFontSize: return .decreaseFontSize

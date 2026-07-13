@@ -12,7 +12,8 @@ public enum BuiltinAction: String, CaseIterable, Sendable {
     case newSession = "new_session", openDirectory = "open_directory", renameSession = "rename_session"
     case closeSession = "close_session", reopenRecent = "reopen_recent", undoClose = "undo_close", clearStatus = "clear_status"
     case increaseFontSize = "increase_font_size", decreaseFontSize = "decrease_font_size", resetFontSize = "reset_font_size"
-    case toggleSplit = "toggle_split", toggleScratch = "toggle_scratch", toggleSearch = "toggle_search"
+    case toggleSplit = "toggle_split", toggleScratch = "toggle_scratch", toggleTerminalZoom = "toggle_terminal_zoom"
+    case toggleSearch = "toggle_search"
     case toggleSidebar = "toggle_sidebar", selectTheme = "select_theme", toggleFullscreen = "toggle_fullscreen"
     case toggleFlaggedView = "toggle_flagged_view", toggleFlag = "toggle_flag", focusWorkspace = "focus_workspace"
     case focusLeftPane = "focus_left_pane", focusRightPane = "focus_right_pane"
@@ -21,6 +22,7 @@ public enum BuiltinAction: String, CaseIterable, Sendable {
     case firstSession = "first_session", lastSession = "last_session"
     case quickTerminal = "quick_terminal", sessionPalette = "session_palette", commandPalette = "command_palette"
     case customCommandPalette = "custom_command_palette", showAttention = "show_attention"
+    case dashboard = "dashboard"
 
     /// The shipped default chord for this action, or `nil` when it has no default key today.
     ///
@@ -47,6 +49,7 @@ public enum BuiltinAction: String, CaseIterable, Sendable {
         case .resetFontSize: return Chord(mods: [.command], key: "0")
         case .toggleSplit: return Chord(mods: [.command], key: "d")
         case .toggleScratch: return Chord(mods: [.command], key: "j")
+        case .toggleTerminalZoom: return Chord(mods: [.command, .shift], key: "return")
         case .toggleSearch: return Chord(mods: [.command], key: "f")
         case .toggleSidebar: return Chord(mods: [.command, .control], key: "s")
         case .toggleFullscreen: return Chord(mods: [.command, .control], key: "f")
@@ -56,6 +59,7 @@ public enum BuiltinAction: String, CaseIterable, Sendable {
         case .commandPalette: return Chord(mods: [.control, .shift], key: "p")
         case .customCommandPalette: return Chord(mods: [.control, .shift], key: "o")
         case .showAttention: return Chord(mods: [.control, .shift], key: "i")
+        case .dashboard: return Chord(mods: [.command, .shift], key: "d")
         case .renameWindow, .deleteWindow, .renameWorkspace, .deleteWorkspace, .renameSession, .clearStatus,
              .firstSession, .lastSession, .selectTheme, .toggleFlaggedView, .focusWorkspace:
             return nil

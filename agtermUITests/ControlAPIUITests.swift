@@ -138,6 +138,21 @@ final class ControlAPIUITests: ControlAPITestCase {
         XCTAssertEqual(resp["ok"] as? Bool, true, "restore.clear should succeed: \(resp)")
     }
 
+    // session.reveal resolves the active session and drives the same focused-cwd Finder action as the
+    // main/context menus. Finder itself is outside the app's AX tree; success plus the returned id proves
+    // the command reached the platform action, while a missing target proves normal resolver errors remain.
+    func testSessionRevealSucceedsAndResolvesTargets() throws {
+        let activeID = try activeSessionID()
+        let revealed = try sendCommand(#"{"cmd":"session.reveal","target":"active"}"#)
+        XCTAssertEqual(revealed["ok"] as? Bool, true, "session.reveal should succeed: \(revealed)")
+        let result = try XCTUnwrap(revealed["result"] as? [String: Any])
+        XCTAssertEqual((result["id"] as? String)?.lowercased(), activeID.lowercased())
+
+        let missing = try sendCommand(#"{"cmd":"session.reveal","target":"ffffffff"}"#)
+        XCTAssertEqual(missing["ok"] as? Bool, false, "an unknown target should fail")
+        XCTAssertTrue((missing["error"] as? String)?.contains("no such session") == true)
+    }
+
     // session.background sets a text watermark and clears it; bad input (missing image, invalid fit) is
     // rejected and the server stays alive. The actual pixels are not AX-observable (Metal surface), so this
     // covers the control round-trip + validation, like the other surface-state commands.
@@ -233,6 +248,87 @@ final class ControlAPIUITests: ControlAPITestCase {
         XCTAssertTrue(pollSessionCount(1, timeout: 10), "closing the session should remove its row")
     }
 
+    // session.close with multiple targets is the control surface for the GUI batch close: one request
+    // hides all targeted sessions together (the save is deferred by the grace window, so assert via tree).
+    func testSessionCloseMultipleTargets() throws {
+        let firstID = UUID(uuidString: "AA100000-0000-0000-0000-000000000001")!
+        let secondID = UUID(uuidString: "AA200000-0000-0000-0000-000000000002")!
+        let thirdID = UUID(uuidString: "AA300000-0000-0000-0000-000000000003")!
+        let snapshot = """
+        {"version":1,"selectedSessionID":"\(firstID.uuidString)","workspaces":[\
+        {"id":"\(UUID().uuidString)","name":"workspace 1","sessions":[\
+        {"id":"\(firstID.uuidString)","customName":null,"cwd":"\(NSHomeDirectory())"},\
+        {"id":"\(secondID.uuidString)","customName":null,"cwd":"\(NSHomeDirectory())"},\
+        {"id":"\(thirdID.uuidString)","customName":null,"cwd":"\(NSHomeDirectory())"}]}]}
+        """
+        try relaunch(withSnapshot: snapshot)
+
+        let closed = try sendCommand(#"{"cmd":"session.close","args":{"targets":["\#(secondID.uuidString)","\#(thirdID.uuidString)"]}}"#)
+        XCTAssertEqual(closed["ok"] as? Bool, true, "batch session.close should succeed: \(closed)")
+        XCTAssertEqual((closed["result"] as? [String: Any])?["affected"] as? Int, 2,
+                       "batch close should report affected sessions separately from diagnostic counts")
+        XCTAssertTrue(pollSessionCount(3, timeout: 1), "grace-enabled close must defer the persisted removal")
+
+        let tree = try sendCommand(#"{"cmd":"tree"}"#)
+        let node = try XCTUnwrap(sessionNode(tree, id: firstID.uuidString), "the first session should remain")
+        XCTAssertEqual(node["id"] as? String, firstID.uuidString)
+        XCTAssertNil(sessionNode(tree, id: secondID.uuidString), "the second session should be hidden by the grouped close")
+        XCTAssertNil(sessionNode(tree, id: thirdID.uuidString), "the third session should be hidden by the grouped close")
+    }
+
+    // The control surface follows the GUI's grace setting. With grace disabled, batch close tears down and
+    // persists immediately instead of leaving the pre-close snapshot on disk for the undo window.
+    func testSessionCloseMultipleTargetsHonorsDisabledGraceUndo() throws {
+        let firstID = UUID(uuidString: "AB100000-0000-0000-0000-000000000001")!
+        let secondID = UUID(uuidString: "AB200000-0000-0000-0000-000000000002")!
+        let thirdID = UUID(uuidString: "AB300000-0000-0000-0000-000000000003")!
+        let snapshot = """
+        {"version":1,"selectedSessionID":"\(firstID.uuidString)","workspaces":[\
+        {"id":"\(UUID().uuidString)","name":"workspace 1","sessions":[\
+        {"id":"\(firstID.uuidString)","customName":null,"cwd":"\(NSHomeDirectory())"},\
+        {"id":"\(secondID.uuidString)","customName":null,"cwd":"\(NSHomeDirectory())"},\
+        {"id":"\(thirdID.uuidString)","customName":null,"cwd":"\(NSHomeDirectory())"}]}]}
+        """
+        try relaunch(withSnapshot: snapshot)
+        try relaunch(withSettings: #"{"closeGraceUndoEnabled":false}"#)
+
+        let closed = try sendCommand(#"{"cmd":"session.close","args":{"targets":["\#(secondID.uuidString)","\#(thirdID.uuidString)"]}}"#)
+
+        XCTAssertEqual(closed["ok"] as? Bool, true, "immediate batch session.close should succeed: \(closed)")
+        XCTAssertEqual((closed["result"] as? [String: Any])?["affected"] as? Int, 2)
+        XCTAssertTrue(pollSessionCount(1, timeout: 2), "grace-disabled close must persist both removals immediately")
+    }
+
+    // Batch target resolution is all-or-nothing: a request naming a valid session alongside an unknown
+    // or ambiguous target must fail WHOLE, without closing the valid member — resolveBatchSessions
+    // errors before anything mutates.
+    func testSessionCloseBatchIsAllOrNothing() throws {
+        let firstID = UUID(uuidString: "ABCD1111-0000-0000-0000-000000000001")!
+        let secondID = UUID(uuidString: "ABCD2222-0000-0000-0000-000000000002")!
+        let thirdID = UUID(uuidString: "AC330000-0000-0000-0000-000000000003")!
+        let snapshot = """
+        {"version":1,"selectedSessionID":"\(firstID.uuidString)","workspaces":[\
+        {"id":"\(UUID().uuidString)","name":"workspace 1","sessions":[\
+        {"id":"\(firstID.uuidString)","customName":null,"cwd":"\(NSHomeDirectory())"},\
+        {"id":"\(secondID.uuidString)","customName":null,"cwd":"\(NSHomeDirectory())"},\
+        {"id":"\(thirdID.uuidString)","customName":null,"cwd":"\(NSHomeDirectory())"}]}]}
+        """
+        try relaunch(withSnapshot: snapshot)
+
+        let unknown = try sendCommand(#"{"cmd":"session.close","args":{"targets":["\#(thirdID.uuidString)","eeee"]}}"#)
+        XCTAssertEqual(unknown["ok"] as? Bool, false, "an unknown target must fail the whole batch")
+        XCTAssertEqual(unknown["error"] as? String, "no such session: eeee")
+
+        let ambiguous = try sendCommand(#"{"cmd":"session.close","args":{"targets":["\#(thirdID.uuidString)","abcd"]}}"#)
+        XCTAssertEqual(ambiguous["ok"] as? Bool, false, "an ambiguous prefix must fail the whole batch")
+        XCTAssertEqual(ambiguous["error"] as? String, "ambiguous session prefix 'abcd' → ABCD1111, ABCD2222")
+
+        let tree = try sendCommand(#"{"cmd":"tree"}"#)
+        XCTAssertNotNil(sessionNode(tree, id: firstID.uuidString), "no session may close when batch resolution fails")
+        XCTAssertNotNil(sessionNode(tree, id: secondID.uuidString), "no session may close when batch resolution fails")
+        XCTAssertNotNil(sessionNode(tree, id: thirdID.uuidString), "the valid batch member must stay open")
+    }
+
     // session.new --command runs the command AS the session's process (no shell echo): create a session
     // whose command writes a marker file, then read it back — proof the command ran as the process, not
     // typed into a shell. The session closes when the command exits (kitty-style).
@@ -274,6 +370,47 @@ final class ControlAPIUITests: ControlAPITestCase {
         }
         XCTAssertTrue(got, "the new command session should be focused so typed text reaches its process")
         try? FileManager.default.removeItem(atPath: marker)
+    }
+
+    // promote → re-split keystroke-clear: after the primary exits and the split survivor is promoted into
+    // the main slot, then a fresh split opens, typing a REAL keystroke in the promoted MAIN pane must NOT
+    // clear a `.right` block owned by the fresh split — the promoted survivor is the main (`.left`) pane now.
+    // Before the role-aware wireStatusClear fix the survivor stayed statically `.right`-wired, so main-pane
+    // typing wrongly cleared the split's `.right` block. Real keystrokes (not session.type inject) drive the
+    // onUserInputClearsStatus path; the socket sets + reads the status. Guards the role-aware clear + re-tag.
+    func testPromotedMainPaneDoesNotClearSplitRightStatus() throws {
+        let sid = try activeSessionID()
+
+        // open a split, focus the primary (left), and exit its shell so the right pane PROMOTES to main.
+        XCTAssertEqual(try sendCommand(#"{"cmd":"session.split","target":"\#(sid)","args":{"mode":"on"}}"#)["ok"] as? Bool, true)
+        RunLoop.current.run(until: Date().addingTimeInterval(1))
+        app.typeKey(.leftArrow, modifierFlags: [.command, .option])
+        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        app.typeText("exit")
+        app.typeKey(.return, modifierFlags: [])
+        RunLoop.current.run(until: Date().addingTimeInterval(2)) // shell exit + promotion + auto-focus
+
+        // re-split → a fresh right pane opens; block it (.right).
+        XCTAssertEqual(try sendCommand(#"{"cmd":"session.split","target":"\#(sid)","args":{"mode":"on"}}"#)["ok"] as? Bool, true)
+        RunLoop.current.run(until: Date().addingTimeInterval(1))
+        XCTAssertEqual(try sendCommand(#"{"cmd":"session.status","target":"\#(sid)","args":{"status":"blocked","pane":"right"}}"#)["ok"] as? Bool, true)
+        // sanity: the block is set before we test that typing elsewhere doesn't clear it.
+        var set = false
+        for _ in 0..<10 {
+            if (sessionNode(try sendCommand(#"{"cmd":"tree"}"#), id: sid)?["status"] as? String) == "blocked" { set = true; break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
+        XCTAssertTrue(set, "the .right block should be set before the keystroke test")
+
+        // type a REAL keystroke in the promoted MAIN (left) pane — must NOT clear the split's .right block.
+        app.typeKey(.leftArrow, modifierFlags: [.command, .option])
+        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        app.typeText("x")
+        RunLoop.current.run(until: Date().addingTimeInterval(1))
+
+        let tree = try sendCommand(#"{"cmd":"tree"}"#)
+        XCTAssertEqual(sessionNode(tree, id: sid)?["status"] as? String, "blocked",
+                       "typing in the promoted main pane must not clear the split pane's .right block")
     }
 
     // session.new --name seeds the new session's custom name at creation (open a session already labeled,
@@ -963,6 +1100,66 @@ final class ControlAPIUITests: ControlAPITestCase {
         let before = try sendCommand(#"{"cmd":"session.move","target":"\#(firstID.uuidString)","args":{"before":"\#(secondID.uuidString)"}}"#)
         XCTAssertEqual(before["ok"] as? Bool, true, "session.move --before should succeed: \(before)")
         XCTAssertTrue(pollSessionOrder([thirdID, firstID, secondID], timeout: 10), "before should place first right before second")
+    }
+
+    // session.move with multiple targets removes the whole block first, then inserts it at the
+    // post-removal slot. A loop over single moves would need to recompute the anchor after each call.
+    func testSessionMoveMultipleTargetsWithinWorkspaceBeforeAnchor() throws {
+        let firstID = UUID(uuidString: "BB100000-0000-0000-0000-000000000001")!
+        let secondID = UUID(uuidString: "BB200000-0000-0000-0000-000000000002")!
+        let thirdID = UUID(uuidString: "BB300000-0000-0000-0000-000000000003")!
+        let fourthID = UUID(uuidString: "BB400000-0000-0000-0000-000000000004")!
+        let fifthID = UUID(uuidString: "BB500000-0000-0000-0000-000000000005")!
+        let snapshot = """
+        {"version":1,"selectedSessionID":"\(firstID.uuidString)","workspaces":[\
+        {"id":"\(UUID().uuidString)","name":"workspace 1","sessions":[\
+        {"id":"\(firstID.uuidString)","customName":null,"cwd":"\(NSHomeDirectory())"},\
+        {"id":"\(secondID.uuidString)","customName":null,"cwd":"\(NSHomeDirectory())"},\
+        {"id":"\(thirdID.uuidString)","customName":null,"cwd":"\(NSHomeDirectory())"},\
+        {"id":"\(fourthID.uuidString)","customName":null,"cwd":"\(NSHomeDirectory())"},\
+        {"id":"\(fifthID.uuidString)","customName":null,"cwd":"\(NSHomeDirectory())"}]}]}
+        """
+        try relaunch(withSnapshot: snapshot)
+
+        let moved = try sendCommand(#"{"cmd":"session.move","args":{"targets":["\#(firstID.uuidString)","\#(secondID.uuidString)"],"before":"\#(fifthID.uuidString)"}}"#)
+        XCTAssertEqual(moved["ok"] as? Bool, true, "batch session.move --before should succeed: \(moved)")
+        XCTAssertEqual((moved["result"] as? [String: Any])?["affected"] as? Int, 2,
+                       "batch move should report the sessions actually moved")
+        XCTAssertTrue(pollSessionOrder([thirdID, fourthID, firstID, secondID, fifthID], timeout: 10),
+                      "the batch should land before fifth after removing both moved rows first")
+    }
+
+    // A destination member in a multi-target request stays in place and is not counted. A one-element
+    // args.targets request remains wire-equivalent to singular move and appends within the same workspace.
+    func testSessionMoveBatchReportsActualAffectedAndNormalizesOneTarget() throws {
+        let wsOneID = UUID(uuidString: "BC100000-0000-0000-0000-000000000001")!
+        let wsTwoID = UUID(uuidString: "BC200000-0000-0000-0000-000000000002")!
+        let aID = UUID(uuidString: "BC300000-0000-0000-0000-000000000003")!
+        let bID = UUID(uuidString: "BC400000-0000-0000-0000-000000000004")!
+        let cID = UUID(uuidString: "BC500000-0000-0000-0000-000000000005")!
+        let snapshot = """
+        {"version":1,"selectedSessionID":"\(aID.uuidString)","workspaces":[\
+        {"id":"\(wsOneID.uuidString)","name":"one","sessions":[\
+        {"id":"\(aID.uuidString)","customName":null,"cwd":"\(NSHomeDirectory())"}]},\
+        {"id":"\(wsTwoID.uuidString)","name":"two","sessions":[\
+        {"id":"\(bID.uuidString)","customName":null,"cwd":"\(NSHomeDirectory())"},\
+        {"id":"\(cID.uuidString)","customName":null,"cwd":"\(NSHomeDirectory())"}]}]}
+        """
+        try relaunch(withSnapshot: snapshot)
+
+        let batch = try sendCommand(#"{"cmd":"session.move","args":{"targets":["\#(aID.uuidString)","\#(bID.uuidString)"],"workspace":"\#(wsTwoID.uuidString)"}}"#)
+        XCTAssertEqual(batch["ok"] as? Bool, true, "mixed batch move should succeed: \(batch)")
+        XCTAssertEqual((batch["result"] as? [String: Any])?["affected"] as? Int, 1,
+                       "only the cross-workspace session should count as affected")
+        XCTAssertTrue(pollSessionOrder(inWorkspace: 1, equals: [bID, cID, aID], timeout: 10))
+
+        let oneTarget = try sendCommand(#"{"cmd":"session.move","args":{"targets":["\#(bID.uuidString)"],"workspace":"\#(wsTwoID.uuidString)"}}"#)
+        XCTAssertEqual(oneTarget["ok"] as? Bool, true, "one-target array move should succeed: \(oneTarget)")
+        XCTAssertEqual((oneTarget["result"] as? [String: Any])?["id"] as? String, bID.uuidString,
+                       "one-target args.targets should return the singular response shape")
+        XCTAssertNil((oneTarget["result"] as? [String: Any])?["affected"])
+        XCTAssertTrue(pollSessionOrder(inWorkspace: 1, equals: [cID, aID, bID], timeout: 10),
+                      "one-target args.targets should append like singular session.move")
     }
 
     // session.move --after with an anchor in ANOTHER workspace relocates the session to the anchor's

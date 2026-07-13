@@ -1,5 +1,47 @@
 # Changelog
 
+## v0.12.1 - 2026-07-13
+
+### Bug Fixes
+
+- stop agterm's embedded shells from identifying as Ghostty via `TERM_PROGRAM`, which could make a Ghostty-aware tool shell out to a standalone `ghostty` on the `PATH` and launch a windowless Ghostty.app while you were using agterm #203 @umputun
+- fix the Codex agent status getting stuck on `blocked` during an auto review, where the permission prompt fired before the review resolved it #204 @umputun
+- strip the dashboard's titlebar to a single exit button while the grid is open, so its sidebar, split, scratch, and quick-terminal buttons can no longer steal focus and leave Esc unable to close the grid #205 @umputun
+
+## v0.12.0 - 2026-07-12
+
+### New Features
+
+- dashboard grid overlay: a per-window grid that shows a picked set of live terminal panes at once, so you can glance across several sessions and jump into one. `⌘⇧D` toggles it over the window's most-recently-used sessions, `agtermctl dashboard <id> <id> ...` opens it over an explicit set, up to nine cells and view-only (arrows move the highlight, Enter drops in, Esc closes) #202 @umputun
+- sidebar Finder folder drops create sessions rooted at the dropped directories, plus `Reveal in Finder` for the active session and spring-open of collapsed workspaces while dragging over them #180 @melonamin
+- promote the surviving split pane into the main slot when the primary pane's shell exits, so a collapsed-to-single session behaves like a fresh single pane, reports `left`, and a later `session.split` opens a fresh pane beside it #121 @fkirill
+- drive Codex agent-status from its lifecycle hooks instead of keyword-matching the final message, so an approval prompt shows `blocked` the moment Codex asks and an ordinary turn no longer gets wrongly stuck on it #194 @umputun
+
+### Bug Fixes
+
+- stop split panes flickering on a rapid focus change, where two overlapping focus retry loops ping-ponged first responder between the panes for ~400ms #200 @umputun
+
+## v0.11.0 - 2026-07-11
+
+### New Features
+
+- multi-select sessions in the sidebar to batch close, move, flag/unflag, or clear status, and drag selected groups between workspaces #179 @melonamin
+- terminal zoom: `cmd+shift+return` renders the active surface full-window over the sidebar and chrome, also driveable over the control API with `surface.zoom` / `agtermctl surface zoom` #158 @melonamin
+- Edit menu Copy/Paste/Select All now work when the terminal has focus, with `session.paste` and `session.selectall` added to the control API #181 @umputun
+- configurable sidebar font size in Settings > Appearance > Window #187 @umputun
+
+### Improvements
+
+- drop the "Closed <name> / Reopen" toast; the undo window is unchanged (cmd-Z during the grace period, File > Reopen Last Closed Item after) cf43d5f @umputun
+
+### Bug Fixes
+
+- re-tint sidebar row text from the row view's live selection state so multi-selected rows stay legible #189 @melonamin
+- let `agtermctl font` target a split or scratch pane #188 @umputun
+- clear the active agent-status glyph on Ctrl-C, not just Escape #185 @umputun
+- keep workspace and session ids unique across close, undo, and reopen #184 @umputun
+- keep keyboard focus on the overlay/scratch, not the pane behind it #182 @umputun
+
 ## v0.10.2 - 2026-07-08
 
 ### Bug Fixes

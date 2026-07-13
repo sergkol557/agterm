@@ -9,12 +9,14 @@ Full detail for every `agtermctl` command. See `SKILL.md` for the model and addr
   bound; agtermctl resolves the same rendezvous: `<AGTERM_STATE_DIR>/agterm.sock`, else
   `<$HOME>/Library/Application Support/agterm/agterm.sock`. Passing `--socket "$AGTERM_SOCKET"` is the
   safe explicit form.
-- **`--json`**: prints the raw response object. Without it, mutations print `ok` and `tree`/`window
-  list` print a human listing. Use `--json` when you need to read ids or values back.
+- **`--json`**: prints the raw response object. Without it, ordinary mutations print `ok`, batch
+  close/move prints the affected session count, and `tree`/`window list` print a human listing. Use
+  `--json` when you need to read ids or values back.
 - **Response shape**: `{"ok": true, "result": {…}}` or `{"ok": false, "error": "<message>"}`.
   `result` carries one of: `id` (affected/new session/workspace/window), `text` (session copy/text),
-  `exitCode` (overlay result), `count` (keymap diagnostics), `tree` (the tree), `windows` (window
-  list). The process exit code is non-zero when `ok` is false.
+  `exitCode` (overlay result), `count` (diagnostics/search), `affected` (sessions actually changed by a
+  batch close/move), `tree` (the tree), `windows` (window list). The process exit code is non-zero when
+  `ok` is false.
 - **Options go after the subcommand**: `agtermctl session type "ls" --target active`, never before it.
 
 ## Addressing
@@ -57,25 +59,47 @@ as `status`, so it is never reported without a `status`), `statusBlink` (`true` 
 set to blink — the `--blink` value; omitted when idle or not blinking) and `statusColor` (the `#rrggbb`
 glyph-tint override — the `--color` value; omitted when idle or using the default color),
 `foreground`/`splitForeground` (the live argv of each pane's foreground
-process — what it is running — omitted when the pane sits at its shell prompt), and `background` (the
+process — what it is running — omitted when the pane sits at its shell prompt), `background` (the
 background spec set via `session background` — a `{kind, text?, imagePath?, colorHex?, opacity?, fit?,
-position?, repeats?}` object; `kind` is `image`/`text`/`color` — omitted when none is set), and `unseen`
+position?, repeats?}` object; `kind` is `image`/`text`/`color` — omitted when none is set), `unseen`
 (the unseen-notification badge count — raised by `notify`/OSC 9/777, cleared by `session seen` — omitted
-when zero). Workspace nodes carry `id`, `name`, `active`, `sessions`, and `focused` (whether the sidebar
+when zero), `fontSize`/`splitFontSize`/`scratchFontSize` (the LIVE font size in points of each pane —
+the read side of `font --pane`; each omitted when that pane isn't realized. `fontSize` tracks the
+default/left target (the main pane, or the promoted split survivor once the primary exits — the same pane
+`font --pane left` writes); only the main pane's size survives a relaunch, so the split/scratch sizes and a
+promoted survivor are live-only — read them back here rather than from the snapshot), and `surfaces` (array
+of `{id, kind, active, visible}` where `kind` is `left`|`right`|`scratch`|`overlay`).
+The surface `id` is the address for `surface zoom`; hidden-but-alive split/scratch surfaces are included
+so a script can zoom them without changing split/scratch visibility first. Caveat: `active`/`visible`
+derive from the session's own flags, not from zoom — and `visible` reads false for a pane behind a
+FLOATING overlay even though it is visually on screen; address by `id`/`kind`, and read the zoom state
+from the top-level `zoomedSurface`. Workspace nodes carry
+`id`, `name`, `active`, `sessions`, and `focused` (whether the sidebar
 tree is collapsed to this workspace — the read side of `workspace focus`, distinct from `active` the
 SELECTED workspace; omitted unless this is the focused one, and absent entirely when nothing is focused).
 
-The tree object itself carries five top-level read-only fields: `idleMs` (milliseconds since the last
+The tree object itself carries ten top-level read-only fields: `idleMs` (milliseconds since the last
 user input in the window, omitted before any activity), `autoFollowMs` (the window's Auto-follow
 timeout in milliseconds, omitted when the setting is Disabled), `sidebarVisible` (whether the
 window's sidebar is currently shown — the read side of the write-only `sidebar` command, so a script
 can restore it, e.g. a tmux-style zoom that hides the sidebar and must re-show it only when it was
 visible before), `sidebarMode` (`tree` or `flagged` — the sidebar view mode, the read side of
-`sidebar mode`), and `quickVisible` (whether the window's quick terminal is currently shown — the read
-side of the write-only `quick` command, so a script can make the toggle idempotent). `idleMs` is live
+`sidebar mode`), `quickVisible` (whether the window's quick terminal is currently shown — the read
+side of the write-only `quick` command, so a script can make the toggle idempotent), `zoomedSurface`
+(the control id of the surface terminal zoom currently fills the window with —
+`surface:<session-id>:<kind>` or `quick`; omitted when nothing is zoomed — the read side of the
+write-only `surface zoom` command, so a script can check "is it already zoomed" and
+record-then-restore), and the four read sides of the write-only `dashboard` command (all omitted when
+no dashboard is open): `dashboardMembers` (the pane refs the open dashboard shows, in grid order —
+`<session-id>:left` for a primary pane, `<session-id>:right` for a split pane, so a split session appears
+as both), `dashboardHighlighted` (the highlighted cell's pane ref — the one Enter jumps into, focusing
+that exact pane), `dashboardFontSize` (the absolute font size in points applied to the cells, omitted when
+the mode is `untouched`), and `dashboardFontMode` (`auto` for `--auto-size`, `fixed` for `--font-size`, or
+`untouched`). `idleMs` is live
 and grows while the window is idle, so it is on `tree` only, never `window.list`; `sidebarVisible` is on
-both; `sidebarMode` and `quickVisible` are `tree`-only (a GUI toggle would leave a cached copy stale).
-All five are read-only projections of GUI state.
+both; `sidebarMode`, `quickVisible`, `zoomedSurface`, and the four `dashboard*` fields are `tree`-only
+(a GUI/keyboard change would leave a cached copy stale).
+All ten are read-only projections of GUI state.
 
 ## workspace
 
@@ -121,9 +145,13 @@ All five are read-only projections of GUI state.
   therefore mutually exclusive with each other and with `--workspace`/`--workspace-name` (the anchor
   already picks the workspace). `agtermctl session new --after active` is the headline case: create
   right after the current session in one round-trip.
-- `session close [--target] [--window W]`.
+- `session close [--target T ...] [--window W]` — close one session, or repeat `--target` to close
+  several sessions in the same window/store. Batch close honors the GUI grace-undo setting: one grouped
+  undo/reopen record when enabled, immediate close when disabled. Returns `result.affected`.
 - `session select [--target] [--window W]`.
 - `session rename <name> [--target] [--window W]`.
+- `session reveal [--target] [--window W]` — select the target session's focused-pane working
+  directory in Finder. Errors when that directory no longer exists.
 - `session go --to next|prev|first|last|next-attention|prev-attention [--window W]` — move the
   selection relative to the CURRENT one (no `--target`). Operates over the VISIBLE/FILTERED set: the
   flagged sessions in flagged mode, the focused workspace's sessions when a workspace is focused, else
@@ -138,6 +166,10 @@ All five are read-only projections of GUI state.
   placement falls out for free. Exactly one placement intent is required among {positional workspace,
   `--to`, `--after`/`--before`}; `--after`/`--before` are mutually exclusive with each other, with `--to`,
   and with a destination workspace (the anchor already names the workspace).
+  Repeat `--target` for a batch move with the workspace and after/before placement forms; the sessions
+  move as one ordered block after all sources are removed. Repeated `--target` is rejected with
+  `--to up|down|top|bottom` because relative reorder is per-session. Batch moves return `result.affected`,
+  counting only sessions whose position/workspace changed.
 - `session type <text> [--stdin] [--select] [--pane left|right|scratch] [--target] [--window W]` — inject text
   as real keystrokes (printable runs plus Return for each newline; no bracketed-paste markers).
   `--stdin` reads the text from stdin instead of the argument. `--select` selects (and realizes) a
@@ -335,11 +367,82 @@ shell (no controlling terminal — `/dev/tty` errors). See examples.md for usage
 
 `window resize`/`move` are control-native (no GUI equivalent — the title bar already drags-to-resize).
 
+## surface
+
+`agtermctl surface zoom [show|hide|toggle] [--target SURFACE_ID|active|quick] [--window W]` — zoom one
+terminal surface to fill the window, hiding the sidebar (a slim title-bar strip with the traffic
+lights and an exit button remains). `SURFACE_ID` comes from
+`agtermctl tree --json` at `.result.tree.workspaces[].sessions[].surfaces[].id`, for example
+`surface:<session-id>:right`. Omit `--target` (or pass `active`) to act on the active surface in the
+frontmost or `--window` window; `quick` addresses a quick-terminal zoom (the id the command itself
+returns when the quick terminal is the zoom target).
+
+`show` is idempotent; `hide` exits zoom and is idempotent too (when an explicit id is provided, it
+only clears that same zoom target, and succeeds as a no-op even if that surface has since vanished);
+`toggle` enters when unzoomed and exits when that surface is already zoomed. Read the current zoom
+back from the tree's top-level `zoomedSurface` (the zoomed surface's control id, omitted when nothing
+is zoomed). This is NOT
+`window zoom`: it does not change the macOS window frame and it must not mutate split ratios, focus,
+sidebar state, or split/scratch visibility. Entering zoom does close the window's transient chrome —
+an open command palette, an active in-terminal search, and (for a session-surface zoom) a visible
+quick terminal. While zoomed, the hidden deck keeps running: `session.split`/`session.scratch`/overlay
+opens on the zoomed session still spawn their shells behind the zoom layer. A notification-banner
+click exits zoom before revealing its session. Use `surface zoom` when the user/agent needs a pane
+fullscreen inside agterm; use `window zoom` only to maximize the whole window on screen.
+
+## dashboard
+
+`agtermctl dashboard <ids…> [--font-size N | --auto-size] [--window W]` opens a per-window, view-only
+grid of the named sessions' live panes; `agtermctl dashboard --mru [--font-size N | --auto-size]
+[--window W]` opens the window's most-recently-used sessions instead of naming ids; `agtermctl dashboard
+--close [--window W]` closes the open one. The cell unit is a session+pane: a non-split session is ONE
+cell, and a SPLIT session shows as TWO cells — its left/primary pane and its right/split pane. The
+positional ids are session addresses (id / unique prefix / `active`); unresolved ids are dropped and ids
+are deduped by resolved session. The 9-cell cap counts PANES (laid out `ceil(sqrt(n))`), applied after
+each session expands into its pane cells: if the panes exceed 9 the first 9 are kept and the dropped-pane
+count is reported in the response text (`dropped N pane(s) beyond the 9-cell limit`, appended to any
+`unresolved:` note with `; `). `--window` targets a specific window's dashboard (default: the frontmost).
+`--mru` draws its members from the window's recency (most-recent first); it is mutually exclusive with
+explicit ids and `--close`, composes with the font flags and `--window`, and errors with `no recent
+sessions` when the window has none.
+
+The most-recently-used grid also has a GUI opener — **⌘⇧D** (the `dashboard` built-in action, rebindable
+in `keymap.conf`), **Navigate ▸ Dashboard**, and the command palette's **Dashboard** entry all TOGGLE the
+frontmost window's dashboard: open it over the window's most-recently-used sessions auto-sized (identical to
+`dashboard --mru --auto-size`) when closed, close it when open. It is a no-op while terminal zoom is active.
+There is no new control command for it — the socket `dashboard` command is unchanged.
+
+It is **view-only**: no cell takes keyboard or mouse input — the whole grid shows live output, and once
+open the keyboard drives it. Arrow keys move a highlight between cells (2-D, no wrap; clamped into a
+ragged last row), Enter jumps into the highlighted session AND focuses that exact pane (selecting the
+session, focusing the primary pane for a `:left` cell or the split pane for a `:right` cell, then closing
+the dashboard), and Esc closes it (leaving the selection as it was). Because a cell takes no input, a
+program you dashboard keeps running but you cannot type into it from the grid — jump in with Enter first.
+
+Font size is optional and mutually exclusive: `--font-size N` sets an absolute cell font in points
+(must be finite and positive), while `--auto-size` sizes the cells relative to the Settings default font
+size, shrinking as the grid grows so a dense 3×3 stays readable. Omit both to leave each pane's own
+font untouched. The applied size and mode read back on the tree's top-level `dashboardFontSize` /
+`dashboardFontMode`; the member pane refs and the highlighted cell read back on `dashboardMembers` /
+`dashboardHighlighted` (each a `<session-id>:left`/`<session-id>:right` pane ref).
+
+The dashboard and terminal zoom are **mutually exclusive**: opening a dashboard closes any active zoom,
+and a zoom becoming active while the dashboard is open closes the dashboard. Opening (and closing) the
+dashboard resizes each pane's pty to (and back from) its cell, so a running program receives a resize
+event and may redraw — "view-only" means no input reaches the cell, not that the pane's process is
+untouched.
+
+Invalid invocations error (rejected at the CLI and re-checked server-side): `--font-size` with
+`--auto-size`, a non-positive `--font-size`, `--close` combined with ids, `--mru`, or a font option,
+`--mru` combined with explicit ids, and an open with neither ids nor `--mru`.
+
 ## quick
 
 `agtermctl quick [show|hide|toggle]` — the frontmost window's quick terminal (a single scratch
 terminal at 90% of the window, not in the tree; its shell stays alive across hides). Errors with
 `no open window` when none is open. Read its visibility back from the tree's top-level `quickVisible`.
+While terminal zoom is active, `show` errors with `terminal zoom active`; `hide` always succeeds (a
+zoomed quick terminal exits its zoom first), so cleanup scripts can dismiss it unconditionally.
 
 `agtermctl quick type TEXT` (or `--stdin`) — inject `TEXT` as literal keystrokes into the frontmost
 window's quick terminal, the quick-terminal twin of `session type`. There is no `--target`/`--window`
@@ -400,8 +503,14 @@ attention list, the title-bar bell, and attention navigation (`session go --to n
 
 ## font
 
-`agtermctl font inc|dec|reset [--target] [--window W]` — increase / decrease / reset the font size on
-the focused surface.
+`agtermctl font inc|dec|reset [--pane left|right|scratch] [--target] [--window W]` — increase / decrease /
+reset the font size of a session pane. `--pane` picks which surface's font to change, like `session type`
+and `session text`: omitted or `left` is the main pane, `right` the split pane (errors with `session has
+no split pane` when the session has no split), `scratch` the session's scratch terminal (settable even
+while hidden). No `other` value. Only the MAIN pane's size is persisted across relaunch; a split/scratch
+pane's font change is live-only, matching a GUI cmd +/- on those panes. Read the resulting size back from
+`tree` — `fontSize` (main), `splitFontSize`, `scratchFontSize`, each in points and omitted when that pane
+isn't realized.
 
 ## keymap
 
@@ -441,7 +550,7 @@ so `{AGT_SESSION_NAME}` and `{AGT_SESSION_PWD}` are as untrusted as `{AGT_SELECT
 Built-in action names for `map` include: `new_window`, `new_workspace`, `new_session`,
 `open_directory`, `rename_session`, `close_session`, `reopen_recent`, `undo_close`, `clear_status`, `increase_font_size`,
 `decrease_font_size`, `reset_font_size`, `toggle_split`, `toggle_scratch`, `toggle_sidebar`, `quick_terminal`,
-`session_palette`, `command_palette`, `custom_command_palette`, and the navigation actions (`previous_session`, `next_session`,
+`session_palette`, `command_palette`, `custom_command_palette`, `dashboard`, and the navigation actions (`previous_session`, `next_session`,
 `first_session`, `last_session`, `previous_attention_session`, `next_attention_session`,
 `focus_left_pane`, `focus_right_pane`, `select_theme`). Editing the keymap from a terminal: open
 `keymap.conf` in `$EDITOR`, then `agtermctl keymap reload`.

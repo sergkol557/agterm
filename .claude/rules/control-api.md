@@ -70,6 +70,9 @@ paths:
   `session.flag`/`flagged`, `session.focus`/`splitFocused`, `session.resize`/`splitRatio`,
   `session.overlay.resize`/`overlaySizePercent`, `sidebar`/`sidebarVisible` (top-level),
   `sidebar.mode`/`sidebarMode`, `workspace.focus`/`focused` (workspace node), `quick`/`quickVisible` (top-level),
+  `font.*`/`fontSize`+`splitFontSize`+`scratchFontSize` (the per-pane LIVE font size — the split/scratch
+  panes' fonts are otherwise unobservable, being live-only; supplied to `controlTree` by app-side closures
+  reading `GhosttySurfaceView.currentFontSize()`, since the host-free tree can't read a surface),
   `window.move`+`window.resize`/`geometry`, `window.fullscreen`+`window.zoom`/`fullscreen`+`zoomed`
   (the last three on `window.list`).
   This is a SEPARATE obligation from the four-point audit (Command + arg + CLI + tests) and easy to forget:
@@ -94,20 +97,46 @@ paths:
 - **Agent-status hooks install.**
   A second Help entry, **Help ▸ Install Agent Status Hooks…** (`AgentHooksInstaller.run()`),
   wires coding agents to `session.status`.
-  The hooks scripts bundle at `agterm/Resources/agent-status/` (`agterm-agent-status.sh` wrapper + `shell/integration.sh`
-  + `codex-notify.sh`, a `project.yml` Contents/Resources folder mirroring `Resources/ghostty`).
+  The hooks scripts bundle at `agterm/Resources/agent-status/` (`agterm-agent-status.sh` generic wrapper,
+  `agterm-codex-status.sh` Codex adapter, `shell/integration.sh`, and `shell/integration.fish`,
+  a `project.yml` Contents/Resources folder mirroring `Resources/ghostty`).
   The installer copies them to `~/.config/agterm/agent-status/`, bakes the bundled `agtermctl`'s absolute
-  path (`Bundle.main.url(forAuxiliaryExecutable:)`) into the wrapper so the hooks fire even without the
+  path (`Bundle.main.url(forAuxiliaryExecutable:)`) into both wrappers so the hooks fire even without the
   CLI on PATH, appends a marker-guarded `source` line to `~/.zshrc` + `~/.bashrc`,
   merges four Claude Code hooks into `~/.claude/settings.json` with a `.bak` (UserPromptSubmit→`active --blink`,
   PostToolUse→`active --blink`, Stop→`completed --auto-reset`, Notification[`permission_prompt`]→`blocked`;
   the unmatched PostToolUse re-asserts `active` after every tool so a `blocked` permission prompt clears
   back to active when work resumes — Claude Code has no "permission answered" event,
   and the gated tool's own PreToolUse fires BEFORE `blocked` is set, so the approved tool's PostToolUse
-  is the first hook afterwards), and PRINTS the Codex `~/.codex/config.toml` `notify` line (never auto-edits
-  TOML).
+  is the first hook afterwards), and merges SIX Codex lifecycle hooks into `~/.codex/config.toml` with a
+  `.bak`.
+  Those six events call the dedicated `agterm-codex-status.sh` adapter with lifecycle actions.
+  The adapter maps SessionStart to `idle`, UserPromptSubmit/PreToolUse/PostToolUse to `active --blink`,
+  and Stop to `completed --auto-reset` through the generic wrapper.
+  `PermissionRequest` is only a candidate signal because Codex fires it before Auto Review decides whether
+  a person is needed.
+  A per-session/pane watcher reads the visible terminal footer through `agtermctl session text` and reports
+  `blocked` only after a real approval or structured-question dialog appears.
+  Automatic approvals and denials never become `blocked`.
+  This replaces a retired `codex-notify.sh` that keyword-matched the turn's final message and misfired both
+  ways (issue #193; the merge also strips the old `notify = [...codex-notify.sh...]` line).
+  The Codex merge PARSES the config with `TOMLDecoder` (a pure-Swift, spec-compliant parser — the one
+  dependency `agtermCore` links besides swift-argument-parser) to decide the outcome
+  (`AgentHooksInstall.CodexMergeOutcome`): a marker block carrying an older agterm wrapper is refreshed
+  while preserving Codex's trailing hook trust tables; a foreign marker block is unchanged;
+  the file already defines its own `hooks` → `.hooksExist`; the file isn't valid TOML → `.unparseable`;
+  else → `.merged`, a marker-guarded
+  append (the same `rcMarkerBegin`/`End` markers as the shell rc files, so comments/layout survive) plus
+  removal of a stale top-level `notify` ONLY when its PARSED value points at `codex-notify.sh` (a comment
+  merely naming the file, or the user's own notifier, is never touched).
+  On `.hooksExist`/`.unparseable` the app leaves the file untouched and surfaces the block for a manual
+  add; the merge is gated on `~/.codex` existing (like the fish rc gate).
+  Both the Codex and Claude write paths distinguish an ABSENT config from one that EXISTS-but-unreadable
+  (the app-side `readExistingConfig`), so a permission/encoding read failure leaves the file untouched
+  instead of clobbering it with no backup.
+  Codex requires new or changed command hooks to be reviewed (`/hooks`) before they run.
   Idempotent + re-runnable (re-run refreshes the baked path).
-  Like the CLI installer, the host-free JSON-merge / shell-rc-marker / backup-path logic is `agtermCore.AgentHooksInstall`
+  Like the CLI installer, the host-free JSON/TOML-merge / shell-rc-marker / backup-path logic is `agtermCore.AgentHooksInstall`
   (unit-tested); `AgentHooksInstaller` (app-side) owns the AppKit FS glue,
   manually verified.
 - **Agent skill install (Claude Code + Codex).**
@@ -120,7 +149,7 @@ paths:
   The skill is a REFERENCE/knowledge skill (both user-invocable via `/agterm` and model-triggered,
   `allowed-tools: Bash(agtermctl *)`; the agent-neutral `description` carries the trigger nouns since
   Codex may ignore the extra `when_to_use` field — unknown frontmatter is harmless),
-  authored at `agterm/Resources/agent-skill/` (`SKILL.md` overview + model + addressing + 57-command
+  authored at `agterm/Resources/agent-skill/` (`SKILL.md` overview + model + addressing + 60-command
   summary + the image-display helper + a troubleshooting/reporting pointer;
   `reference.md` full per-command detail + keymap format; `examples.md` agtermctl recipes;
   `troubleshooting.md` diagnosing the common problems (keymap editor, custom actions,
@@ -185,15 +214,25 @@ paths:
   via `RequestCommand.echoesResultID`) where the new id isn't known yet;
   every other mutation prints `ok` (the id you already named is noise).
   The id is always present under `--json`.
+  Batch session mutations return the number of sessions actually changed in `result.affected`; human
+  output is `1 session` / `N sessions`. `result.count` remains reserved for diagnostics and search.
 - **Addressing.**
   UUID is canonical, with sugar: `active` (the selected session / current workspace),
   exact `uuidString` (case-insensitive), or a git-style unique prefix.
   Zero prefix hits → `notFound` error, ≥2 → `ambiguous` error listing the candidates.
   `--target` defaults to `active`, so scripts rarely type an id and never for "the current one".
-- **Command catalog (57 commands):**
+  Batch-capable session commands (`session.close`, and `session.move` with workspace/after/before placement)
+  accept repeated `--target` flags in the CLI; on the wire these are `args.targets: [String]`. The batch is
+  scoped to one window/store: the first target resolves by the normal `--window`/frontmost/cross-window
+  rules, then remaining targets resolve inside that same store so one command never mutates multiple windows.
+  The top-level `target` also carries the first explicit batch target so a new CLI talking to a still-running
+  pre-batch server degrades to a named session instead of accidentally acting on `active`.
+- **Command catalog (60 commands):**
   - `tree`
   - `workspace.new`/`workspace.rename`/`workspace.delete`/`workspace.select`/`workspace.move`/`workspace.focus`
-  - `session.new`/`session.close`/`session.select`/`session.rename`/`session.move`/`session.type`/`session.split`/`session.scratch`/`session.focus`/`session.resize`/`session.go`/`session.copy`/`session.paste`/`session.selectall`/`session.text`/`session.search`/`session.status`/`session.flag`/`session.seen`/`session.background`/`session.overlay.open`/`session.overlay.close`/`session.overlay.resize`/`session.overlay.result`
+  - `session.new`/`session.close`/`session.select`/`session.rename`/`session.reveal`/`session.move`/`session.type`/`session.split`/`session.scratch`/`session.focus`/`session.resize`/`session.go`/`session.copy`/`session.paste`/`session.selectall`/`session.text`/`session.search`/`session.status`/`session.flag`/`session.seen`/`session.background`/`session.overlay.open`/`session.overlay.close`/`session.overlay.resize`/`session.overlay.result`
+  - `surface.zoom`
+  - `dashboard`
   - `quick`/`quick.type`/`quick.text`
   - `sidebar`/`sidebar.mode`/`sidebar.expand`/`sidebar.collapse`
   - `notify`
@@ -216,10 +255,26 @@ paths:
   Setting echoes the resulting effective side in `result.text`; the BARE form (no name) reads the side
   the last config feed applied (`SettingsModel.lastAppliedIsDark`), which the test polls to prove the
   flip actually drove the reload.
-  `AppearanceFlipUITests` is its only consumer; the public command count stays 57.
+  `AppearanceFlipUITests` is its only consumer; the public command count stays 60.
 
   `workspace.delete` honors keep-at-least-one and returns an error instead of the GUI confirm alert (nothing
   blocks on a modal).
+  `session.close` has a legacy single-target control path and a batch path. Single-target control close
+  continues to call `AppStore.closeSession` (hard close; backward-compatible with the original control
+  behavior). Repeated `--target` / `args.targets` is the GUI-equivalent batch close: it resolves all targets
+  in one store and honors `closeGraceUndoEnabled`. When enabled it calls `AppStore.softCloseSessions`,
+  producing one grace timer and one grouped undo/reopen record; when disabled it immediately hard-closes
+  each resolved session like the GUI. Both return the number actually closed in `result.affected`
+  (`ok` with the count — never an error for an empty result, matching the batch `session.move` shape).
+  Batch target resolution (`resolveBatchSessions`) is all-or-nothing and deduplicating: any unknown or
+  ambiguous target fails the WHOLE request before anything mutates
+  (`ControlAPIUITests.testSessionCloseBatchIsAllOrNothing`), and a batch that deduplicates to a single
+  session (e.g. `--target a --target a`) takes the single-target path — for close that is the legacy
+  HARD close (no grace window), consistent with the one-element `session.move` routing.
+  During the grace window, reopening any member restores the whole group but selects the specific Recent
+  item the user chose, matching workspace close grouping without losing selection intent. Keep-in-sync: `ControlArgs.targets`, the
+  `.sessionClose` dispatcher batch arm, `ControlActions.closeSessions`, `agtermctl session close --target`
+  repeat support, round-trip/dispatcher/CLI tests, and `ControlAPIUITests.testSessionCloseMultipleTargets`.
   `session.move` is MODE-BEARING with THREE exclusive placement intents:
   `args.to` (`up`|`down`|`top`|`bottom`) REORDERS the session within its own workspace (parses `ReorderDirection`,
   drives `AppStore.reorderSession` → the existing `moveSession(at:)` primitive, returns the session id);
@@ -237,11 +292,32 @@ paths:
   after/before + a workspace is an error (`"session.move takes --after/--before or a workspace, not both"`
   — the anchor already names the workspace), both `--to`+workspace and neither are errors,
   and an invalid direction is an error.
+  Repeated `--target` / `args.targets` makes `session.move` a batch move for workspace relocation and
+  after/before placement. It uses the same host-free block semantics as sidebar multi-drag:
+  all moved sessions are resolved in visual tree order, removed first, then inserted as one block via
+  `SidebarDrop.resolveSessions`/`AppStore.moveSessions`. Batch `--to up|down|top|bottom` is deliberately
+  rejected (`"session.move --target can be repeated only with a workspace or --after/--before"`) because
+  relative one-step reorder is inherently per-session and order-dependent.
+  The response reports only sessions actually moved in `result.affected`; members already in a workspace
+  destination remain in place and are not counted. A one-element `args.targets` array is equivalent to the
+  singular form (the dispatcher routes it through `moveSession`), including the `result.id` response and
+  moving an existing destination member to the end.
   Keep-in-sync: `ControlArgs.after`/`before` + `ControlSessionMove.place` in `ControlProtocol.swift`/`ControlModes.swift`,
   the `.sessionMove` place-mode routing + guards in `ControlDispatcher`, the app-side `moveSession` place
   case (`ControlServer+SessionActions.swift`, resolving both target + anchor locations and calling
   `resolveRelative`), the `session move --after/--before` CLI, and round-trip / dispatcher / e2e
   (`testSessionMovePlaceWithinWorkspace`, `testSessionMovePlaceCrossWorkspace`, the reject-* guards) tests.
+  Batch keep-in-sync additionally includes `ControlArgs.targets`, `ControlActions.moveSessions`,
+  `agtermctl session move --target` repeat support, and `ControlAPIUITests.testSessionMoveMultipleTargetsWithinWorkspaceBeforeAnchor`.
+  Keep-in-sync exemptions for sidebar batch actions: Flag/Unflag is loop-equivalent to repeated
+  `session.flag on|off --target <id>` (the plural store API only saves once).
+  The GUI's multi-select toggle is NOT a `toggle` loop: `AppActions.toggleFlags` computes ONE uniform
+  value for the whole set (`allSatisfy(\.flagged)` — flag all unless every target is already flagged)
+  and applies it, so on a mixed selection a per-row `session.flag toggle` loop diverges from the GUI.
+  A script wanting the GUI semantics reads `flagged` off `tree`, computes the uniform value, and loops
+  `on`/`off`.
+  Clear Status is loop-equivalent to repeated `session.status idle --target <id>` and intentionally adds
+  no batch command.
   `workspace.move` is the workspace REORDER (control-native, no separate verb):
   `args.to` (`up`|`down`|`top`|`bottom`) resolves the workspace target via the shared `resolveWorkspace`
   (honoring the global `--window` selector like other workspace commands),
@@ -351,7 +427,8 @@ paths:
   re-runs on restore (through the same `config.command` exec path) when the **restore-running-command** opt-in
   is on — gated via the transient `Session.wasRestored` so a fresh session always runs its command while a
   restored one honors the toggle (default off → a restored session is a plain shell); a live captured
-  foreground preempts it, and `closePrimaryPane` clears it when a command pane exits into a promoted split.
+  foreground preempts it, and `closePrimaryPane` clears it when a command pane exits and its split
+  survivor is promoted to the session's single pane.
   The arm threads `request.args?.command` into `AppStore.addSession(…, command:)`,
   which `makeSurface` passes to `GhosttySurfaceView(command:)` → `config.command` RAW (`strdup`,
   NO wrapper). libghostty tokenizes it into argv (shell-like word-splitting that RESPECTS quotes) and
@@ -410,8 +487,8 @@ paths:
   `session.selectall` selects the target's ENTIRE terminal buffer (main surface) — the analogue of ⌘A /
   Edit ▸ Select All.
   Both run a libghostty binding action on the resolved surface — `paste_from_clipboard` /
-  `select_all` — through the SAME `ControlServer+SurfaceIO.surfaceBindingAction` helper the `font.*` arms
-  use (resolve session → guard the surface is realized, `session not realized` otherwise → `performBindingAction`
+  `select_all` — through the shared `ControlServer+SurfaceIO.surfaceBindingAction` helper
+  (resolve session → guard the surface is realized, `session not realized` otherwise → `performBindingAction`
   → return the id), so paste takes the normal libghostty paste path (bracketed paste, PASTE requests are
   ungated so no OSC-52 prompt) and select_all covers the whole grid.
   They are the control half of the GUI Edit menu: agterm keeps the STANDARD SwiftUI Edit menu and
@@ -469,12 +546,15 @@ paths:
   since libghostty's built-in `super+a` is character-matched too (found in review — the fallback set must cover
   every shortcut the Edit menu owns, not just copy/paste).
   **The session-scoped surface arms resolve `Session.addressableSurface`, not `Session.surface`.**
-  `session.copy`/`session.paste`/`session.selectall`/`font.*` act on "the session" rather than a named `--pane`,
+  `session.copy`/`session.paste`/`session.selectall` act on "the session" rather than a named `--pane`
+  (and so does `font.*`'s omitted/`left` default — its `right`/`scratch` panes resolve `splitSurface`/`scratchSurface`
+  instead, via its own pane switch rather than `surfaceBindingAction`),
   and `addressableSurface` is `surface ?? splitSurface`: identical to `surface` for every ordinary or split
-  session, but falling back to a PROMOTED SPLIT SURVIVOR whose primary shell exited (`closePrimaryPane` nils
-  `surface` and keeps the live shell in `splitSurface`, asserted by `AppStorePaneTests`).
-  Resolving through `surface` alone returned `session not realized` for a session the user was actively typing
-  in. It is deliberately NOT focus-aware (unlike `activeSurface`) — a shown split keeps addressing the main
+  session — including a PROMOTED SPLIT SURVIVOR, which `closePrimaryPane` moves into the main slot
+  (`AppStorePaneTests` asserts `splitSurface == nil` after promotion).
+  The `?? splitSurface` term is a defensive fallback only, kept so the arms answer (instead of
+  `session not realized`) should `surface` ever be nil while a split shell is still alive.
+  It is deliberately NOT focus-aware (unlike `activeSurface`) — a shown split keeps addressing the main
   pane, which is what keeps `session.selectall` and its `session.copy` read-back on the SAME surface.
   READ-BACK: neither adds a `ControlSessionNode` field — `session.selectall`'s read-back is `session.copy`
   (reads the resulting selection) and `session.paste`'s is `session.text` (reads the inserted buffer), the
@@ -663,6 +743,128 @@ paths:
   fields below) — populated in `AppStore.controlTree`, round-tripped by `treeSessionNodeRoundTripsWithOverlaySizePercent`/`…OmitsOverlaySizePercentWhenNil`
   and `AppStorePaneTests.controlTreeReportsOverlaySizePercent`, and mirrored in the agent-skill `reference.md`
   tree schema — so a script can record an overlay's size before zooming to `--full` and restore it exactly.
+  `surface.zoom` (mode `show`|`hide`|`toggle`) fills the target window with ONE terminal surface,
+  hiding the sidebar and collapsing the title bar to a slim strip (traffic lights + an exit button;
+  the zoomed terminal is inset below `titlebarHeight`, NOT borderless) — the control half of
+  ⌘⇧Return / View ▸ Toggle Terminal Zoom (`BuiltinAction.toggleTerminalZoom`) and the title-bar exit button.
+  Targets: omitted/`active` resolves the active surface (quick terminal first, else the active session's
+  overlay > scratch > focused-split > primary via `TerminalZoomController.resolveTarget`, which derives the
+  precedence from `TerminalZoomSurface.isActive`); an explicit `surface:<session-id>:<left|right|scratch|overlay>`
+  id (from `tree`'s `surfaces` nodes) zooms that surface — hidden-but-alive splits/scratches included — and
+  `quick` addresses a quick-terminal zoom (the API accepts the id it emits).
+  State lives in the per-window, host-free `TerminalZoomController` (`agtermCore/TerminalZoom.swift`,
+  registered in `TerminalZoomRegistry`); the app-side arm (`setSurfaceZoom`/`setActiveSurfaceZoom`) only
+  resolves the target and shapes the response — ALL mode-vs-state semantics stay in `TerminalZoomController.set`,
+  shared with the GUI toggle, so the three callers can't drift.
+  Zoom is a VIEW mode with hard invariants: it must not mutate split ratios, focus, sidebar state, or
+  split/scratch visibility (the zoom host mounts with `reportsFocusChange: false` → `suppressFocusChange`
+  on ALL `onFocusChange` paths, incl. `clearUnseenOnRefocus`), and the zoomed session's deck entry stays
+  mounted with a CONSTANT shape — only the zoom-owned slot swaps to its `deckHostsSurface` placeholder —
+  so control-opened split/scratch/overlay surfaces still realize and run behind the zoom layer.
+  Entering zoom closes the window's transient chrome (the palette — frontmost window only, it is
+  app-global — an active ⌘F search, and, for a session zoom, a visible quick terminal); a
+  notification-banner reveal exits zoom first; ⌘W exits zoom (the topmost cover, stepwise like the
+  quick/overlay/scratch dismissal); font commands stay live (they act on the focused = zoomed surface).
+  While zoomed, `quick show` and `session.search` (except `close`) are rejected; `quick hide` stays
+  idempotent (a zoomed quick terminal un-zooms first, so a script can always dismiss it), and an
+  explicit-target `surface.zoom hide` skips the availability check so hide is idempotent even after
+  the surface vanished.
+  The READ side is `ControlTree.zoomedSurface` at the tree TOP level — the zoomed surface's control id
+  (`surface:<session-id>:<kind>` or `quick`), nil/omitted when nothing is zoomed — LIVE, resolved
+  app-side in `buildTree` from the projected window's `TerminalZoomController.target?.controlID` and
+  threaded as a `zoomedSurface: () -> String?` closure on `AppStore.controlTree` (the `quickVisible`
+  seam), `tree`-only for the same staleness reason; so a script can check "is it already zoomed" and
+  record-then-restore. The per-session `surfaces` nodes are the ADDRESSING list, not the state read-back:
+  `ControlSurfaceNode.active`/`visible` derive from session flags (overlay/scratch/splitFocused), are
+  identical zoomed or not, and `visible` reads false for a pane behind a FLOATING overlay even though
+  that pane is visually on screen — documented as a caveat on the node type and in the skill.
+  Four-point keep-in-sync audit: (1) `case surfaceZoom = "surface.zoom"` + `ControlSurfaceNode`/`ControlSessionNode.surfaces`
+  + `ControlTree.zoomedSurface` in `ControlProtocol.swift`, (2) the `.surfaceZoom` arm (`setSurfaceZoom`) in `ControlServer+SessionActions.swift`
+  + the `surfaces`/`zoomedSurface` population in `AppStore.controlTree`/`buildTree`, (3) the `surface zoom` subcommand in `agtermctlKit`,
+  (4) round-trip in `ControlProtocolTests` (incl. `treeRoundTripsWithZoomedSurface`/`…OmitsZoomedSurfaceWhenNil`)
+  + `TerminalZoomTests` + the e2e `ControlSurfaceZoomUITests` (incl. the tree read-back and the
+  `--window`-scoped error paths).
+  `dashboard` opens a per-window, VIEW-ONLY grid of live PANE cells
+  (`agtermctl dashboard <ids…> [--font-size N | --auto-size] [--window W]`),
+  or populates it from the window's most-recently-used sessions instead of explicit ids
+  (`dashboard --mru [--font-size N | --auto-size] [--window W]`),
+  or CLOSES the open one (`dashboard --close [--window W]`).
+  The cell unit is a session+PANE (a `DashboardMember` = session UUID + `.primary`/`.split`): a non-split
+  session is ONE `.primary` cell, and a SPLIT session (`hasSplit`, both shells alive) expands into TWO cells —
+  its `.primary` and `.split` panes — so a split shows both panes side by side.
+  It is the N-surface generalization of `surface.zoom`'s reparent, with focus inverted (zoom focuses
+  its one surface; the dashboard focuses NONE while open).
+  It is reachable BOTH over the socket AND from the GUI:
+  the control open path is `dashboard`/`agtermctl dashboard` (unchanged),
+  and the GUI opener is `BuiltinAction.dashboard` (⌘⇧D), Navigate ▸ Dashboard, and the command palette
+  `Dashboard` entry — all TOGGLE the frontmost window's MRU grid auto-sized (the `dashboard --mru
+  --auto-size` equivalent), reusing the existing socket command with NO new control command, so the catalog
+  stays 60.
+  Once open, the keyboard drives it: arrows move the highlight, Enter jumps into the highlighted session
+  AND focuses that exact pane + closes, Esc closes.
+  Host-free geometry + navigation + auto-size math live in `DashboardLayout`
+  (`grid(count:) = ceil(sqrt(n))` cols, `move` clamped 2-D nav into a ragged last row,
+  `dashboardFontSize(cols:rows:base:)`), per-window state in the `@Observable @MainActor DashboardController`
+  (`members: [DashboardMember]`/`highlighted: DashboardMember?`/`fontMode`/`appliedFontSize`) reached through
+  `DashboardControllerRegistry` — the exact `TerminalZoomController`/`TerminalZoomRegistry` precedent.
+  Validation is host-free in `ControlDispatcher.dispatchDashboard`:
+  `--close` takes no ids, `--mru`, or font flags, `--font-size` is mutually exclusive with `--auto-size`,
+  a `--font-size` must be finite and positive, an open needs at least one id OR `--mru`,
+  and `--mru` cannot be combined with explicit ids (but composes with the font flags + `--window`).
+  **The 9-cell cap is NO LONGER in the dispatcher** — the cell unit is a PANE now, so a split session
+  expands to two cells and the cap counts PANES, which needs the store; the dispatcher forwards ALL raw ids
+  untouched and the cap lives APP-SIDE.
+  The dispatcher routes to `ControlActions.setDashboard(targets:window:close:fontMode:mru:)`;
+  the app-side `ControlServer` resolves ids via `ControlTargetResolver` inside `args.window ?? frontmost`,
+  DEDUPS by resolved UUID, drops unresolved, then EXPANDS each resolved session IN ORDER into pane cells
+  (always its `.primary`; plus `.split` when `hasSplit`), CAPS the resulting PANE list to
+  `DashboardLayout.maxCells` (9) — so the drop counts panes, reported as
+  `dropped N pane(s) beyond the 9-cell limit` in `result.text`, APPENDED to any `unresolved: …` text with
+  `; ` (neither clobbers the other) — closes any active zoom (zoom ↔ dashboard are reciprocally exclusive),
+  and drives that window's controller.
+  `WindowContentView` reparents each cell's OWN pane surface (`.primary` → `\.surface`, `.split` →
+  `\.splitSurface`) via the generalized `dashboardHostsSurface` (both panes of a split member are claimed,
+  each yielding its deck slot's `Color.clear` placeholder).
+  `--mru` skips the id-resolution entirely: it takes the sessions from `AppStore.recentSessions(limit:)`
+  (host-free, on `AppStore+Recency.swift` — the window's `sessionRecency.top(9, in:validIDs)`, most-recent
+  first, ≤ 9, fewer if fewer, stale/closed ids skipped) then expands + caps like the id path, erroring
+  `no recent sessions` on an empty window; the font flags still apply and nothing goes `unresolved`.
+  Enter (`selectDashboardMember`) selects the session, CLOSES the dashboard, then focuses the cell's EXACT
+  pane — the split pane via `focusSplitPane(_:wantSplit:true)` for a `.split` cell (mirroring
+  `revealActiveBlockedPane`'s `.right` branch), else the main pane; close-before-focus keeps the
+  `dashboardActive` focus guards from blocking it.
+  READ-BACK: FOUR `tree`-top-level fields (LIVE, `tree`-only like `zoomedSurface`) supplied to
+  `AppStore.controlTree(...)` as app-side closures reading the target window's controller through the registry —
+  `dashboardMembers` (PANE refs in grid order, `<session-id>:left`/`<session-id>:right` via
+  `DashboardMember.controlRef`, so a split session appears as both),
+  `dashboardHighlighted` (the highlighted cell's pane ref),
+  `dashboardFontSize` (the applied absolute size in points, nil = untouched),
+  and `dashboardFontMode` (`auto`/`fixed`/`untouched`).
+  `--mru` adds NO new read-back — the members it resolves ARE the existing `dashboardMembers`,
+  so a script reads back what it opened there (no tree field is owed for the mru intent itself).
+  Four-point keep-in-sync audit: (1) `case dashboard` + `ControlArgs.close`/`fontSize`/`autoSize`/`mru`
+  (ids reuse `targets`, window reuses `window`) + the four `ControlTree.dashboard*` fields in `ControlProtocol.swift`,
+  (2) the `.dashboard` dispatch arm (`dispatchDashboard`) → `ControlActions.setDashboard` (app-side
+  `ControlServer`) + the four read-back closures at the `controlTree` build site,
+  (3) the `dashboard` subcommand (`validate()`-guarded flag combos) in `agtermctlKit/MiscCommands.swift`,
+  (4) round-trip in `ControlProtocolTests` + dispatcher validation/routing in `ControlDispatcherTests`
+  (now asserting the dispatcher forwards ALL ids un-capped) + `DashboardLayoutTests`/`DashboardControllerTests`
+  (pane-cell open/move/highlight/reconcile, incl. a split member pruned when its split closes) +
+  `AppStoreTests` (the pane-ref read-back closures) + CLI mapping in `CommandsTests` + the e2e
+  `DashboardUITests` (incl. `testSplitSessionOpensTwoCellsAndEnterFocusesSplitPane`, which asserts the split
+  session's two `:left`/`:right` cells AND that Enter on the split cell flips the tree `splitFocused`).
+  The PANE expansion + the PANE cap + the dropped-pane text are app-side (`ControlServer.setDashboard`,
+  they need the store), build-verified + exercised by the e2e; the dispatcher no longer caps.
+  The `--mru` flag rides the same command with NO new command/read-back — its keep-in-sync is:
+  `ControlArgs.mru` (`ControlProtocol.swift`), the dispatcher `--mru` validation + routing
+  (`dispatchDashboard`, `--close`/id mutual-exclusion), the `mru:` param on `ControlActions.setDashboard`
+  + the app-side `AppStore.recentSessions(limit:)` lookup (`ControlServer`), the `--mru` CLI flag
+  (`MiscCommands.swift`), and its tests
+  (`AppStoreTests.recentSessions*`, `ControlProtocolTests` round-trip/omit, `ControlDispatcherTests`
+  `dashboardMru*`, `CommandsTests` `dashboardMru*`, and `DashboardUITests.testDashboardMruOpensRecentSessions`).
+  It is state-mutating-with-read-back EXEMPT: the resulting state IS `dashboardMembers`,
+  so no new tree field is owed.
+  See the `libghostty.md` dashboard note for the reparent/overlay/view-only + transient-font-override mechanics.
   Mode-bearing commands (`session.split`/`quick`) compute the delta against current state so `on`/`off`/`show`/`hide`
   are idempotent, and an unknown mode is an error.
   `quick`'s visibility reads back on `ControlTree.quickVisible` at the tree TOP level — LIVE, resolved
@@ -1065,5 +1267,12 @@ paths:
   (image/text/color set/clear + tree read-back).
   **Agent-skill mirror (HARD keep-in-sync, 4th surface):** all commands are documented in the bundled
   `agterm/Resources/agent-skill/` (SKILL.md summary, reference.md detail,
-  examples.md recipes) and the command count there is bumped to 57 to match.
-
+  examples.md recipes) and the command count there is bumped to 60 to match.
+  **Website mirror (HARD keep-in-sync):** the site's per-command reference `site/commands.html` documents
+  EVERY `agtermctl` control command — one inline-styled card per command carrying its invocation, its
+  arguments, and the `tree` read-back field, grouped into its command family's section.
+  A new `Command` case REQUIRES a new `site/commands.html` entry (a changed command an updated one, a
+  removed command a deleted one), in lockstep with the agent skill above and `README.md`/`site/docs.html`;
+  the page's "60 commands" copy must track the catalog count.
+  It drifted once because the site keep-in-sync convention named only `docs.html`/`index.html`, so
+  `dashboard` and `surface.zoom` shipped undocumented here.

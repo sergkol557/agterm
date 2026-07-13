@@ -6,7 +6,7 @@ Worked `agtermctl` examples. See `reference.md` for exact flags and return shape
 ## Inspect the current state
 
 ```bash
-agtermctl tree --json        # workspaces -> sessions, with active/split/overlay/scratch/flagged flags
+agtermctl tree --json        # workspaces -> sessions, active/split/overlay/scratch/flagged flags, surface ids
 agtermctl window list --json # windows, with open/active flags
 
 # what is each pane RUNNING right now (foreground argv; absent when at the shell prompt)
@@ -93,10 +93,18 @@ wherever the anchor lives, even in another workspace — in one shot, with no vi
 # move the current session to sit right after another (cross-workspace if the anchor is elsewhere)
 agtermctl session move --after 3f2a --target active
 agtermctl session move --before "$logs" --target "$server"
+
+# move several sessions together as one ordered block
+agtermctl session move "$ws" --target "$server" --target "$logs"
+agtermctl session move --after "$anchor" --target "$server" --target "$logs"
+
+# close several sessions with one grace-period undo
+agtermctl session close --target "$server" --target "$logs"
 ```
 
 `--after`/`--before` are mutually exclusive with each other, with `--to`, and with a destination
-workspace — the anchor already picks the workspace.
+workspace — the anchor already picks the workspace. Repeated `--target` is only for workspace and
+after/before placement, not `--to up|down|top|bottom`.
 
 ## Resize the split divider from a keybinding
 
@@ -383,6 +391,78 @@ agtermctl tree --json | jq -r '.result.tree.workspaces[].sessions[] | select(.st
 
 `--pane left` (or omitting it) is the main pane. Feed a keymap command's `$AGT_PANE` straight through
 (`session status blocked --pane "$AGT_PANE"`) to tag the exact pane a shortcut fired from.
+
+## Zoom a terminal surface by control id
+
+```bash
+# Fill the window with the active terminal surface; call again to leave zoom.
+agtermctl surface zoom
+
+# Zoom the active session's right split pane by id, even if the split is hidden.
+sid=${AGTERM_SESSION_ID:?}
+surface=$(agtermctl tree --json |
+  jq -r --arg sid "$sid" '.result.tree.workspaces[].sessions[]
+    | select(.id == $sid)
+    | .surfaces[]
+    | select(.kind == "right")
+    | .id')
+agtermctl surface zoom show --target "$surface"
+agtermctl surface zoom hide --target "$surface"
+
+# Read the current zoom back (the zoomed surface's control id; null when nothing is zoomed).
+agtermctl tree --json | jq -r '.result.tree.zoomedSurface'
+```
+
+`surface zoom` is not `window zoom`: it does not move/resize the macOS window and must not change split
+ratios, sidebar state, focus, or split/scratch visibility. Surface ids come from `tree --json`.
+
+## Watch several sessions at once in a dashboard grid
+
+The dashboard shows several sessions' live output in one view-only grid — for watching several agents or
+builds at once. The cell unit is a session+pane: a non-split session is one cell, and a SPLIT session
+shows as TWO cells (its left/primary and right/split panes), capped at 9 cells total. No cell takes input:
+the keyboard navigates a highlight (arrows), Enter jumps into the highlighted session AND focuses that
+exact pane then closes, Esc closes. Open it over the socket with explicit session ids, or with `--mru` to
+pull the window's most-recently-used sessions automatically. The most-recently-used grid also has a built-in
+opener — **⌘⇧D** (the `dashboard` action), **Navigate ▸ Dashboard**, or the command palette's **Dashboard**
+toggle it auto-sized (the `dashboard --mru --auto-size` equivalent), so the recent-sessions view needs no
+script for the common case.
+
+```bash
+# grid of three sessions, cells auto-sized to the grid (shrinking as it grows)
+agtermctl dashboard "$a" "$b" "$c" --auto-size
+
+# no ids: fill the grid from the window's most-recently-used sessions (up to 9, fewer if fewer)
+agtermctl dashboard --mru --auto-size
+
+# an absolute cell font in points instead of --auto-size (the two are mutually exclusive)
+agtermctl dashboard "$a" "$b" --font-size 12
+
+# open in a specific window (default is the frontmost)
+agtermctl dashboard "$a" "$b" --window "$AGTERM_WINDOW_ID"
+
+# read back what the open dashboard is showing (all null when none is open); members are pane refs
+# (`<id>:left`/`<id>:right`), so a split session shows both its :left and :right cells
+agtermctl tree --json | jq '.result.tree | {dashboardMembers, dashboardHighlighted, dashboardFontSize, dashboardFontMode}'
+
+# close it (or press Enter/Esc in the grid)
+agtermctl dashboard --close
+```
+
+The MRU grid is already on **⌘⇧D** (the built-in `dashboard` action) — rebind that chord in `keymap.conf`
+with `map <chord> dashboard`. To dashboard a FIXED set of explicit ids instead, bind a `keymap.conf` custom
+action (then `agtermctl keymap reload`):
+
+```conf
+command "Dashboard build hosts" ctrl+a>d /usr/local/bin/agtermctl dashboard "$WEB" "$API" --auto-size
+```
+
+`--mru` is mutually exclusive with explicit ids and `--close`, and errors with `no recent sessions` when
+the window has none. The 9-cell cap counts PANES (a split session is two cells), so a set whose panes
+exceed 9 keeps the first 9 panes and the response reports the dropped-pane count; ids are deduped. The
+dashboard and terminal zoom are mutually exclusive (opening one closes the other). Opening/closing resizes
+each pane's pty to/from its cell, so a running program may redraw — view-only means no input, not no
+process effect.
 
 ## Navigate and manage windows
 

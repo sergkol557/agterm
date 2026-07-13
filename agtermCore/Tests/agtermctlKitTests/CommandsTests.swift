@@ -129,6 +129,11 @@ struct CommandsTests {
         #expect(try request(["session", "close", "--target", "x"]) == ControlRequest(cmd: .sessionClose, target: "x"))
     }
 
+    @Test func sessionCloseMultipleTargets() throws {
+        let expected = ControlRequest(cmd: .sessionClose, target: "a", args: ControlArgs(targets: ["a", "b"]))
+        #expect(try request(["session", "close", "--target", "a", "--target", "b"]) == expected)
+    }
+
     @Test func sessionSelectDefaultsActive() throws {
         #expect(try request(["session", "select"]) == ControlRequest(cmd: .sessionSelect, target: "active"))
     }
@@ -152,6 +157,12 @@ struct CommandsTests {
         #expect(try request(["session", "move", "ws2", "--target", "s1"]) == expected)
     }
 
+    @Test func sessionMoveMultipleTargetsToWorkspace() throws {
+        let expected = ControlRequest(cmd: .sessionMove, target: "s1",
+                                      args: ControlArgs(targets: ["s1", "s2"], workspace: "ws2"))
+        #expect(try request(["session", "move", "ws2", "--target", "s1", "--target", "s2"]) == expected)
+    }
+
     @Test func sessionMoveReorder() throws {
         let expected = ControlRequest(cmd: .sessionMove, target: "active", args: ControlArgs(to: "up"))
         #expect(try request(["session", "move", "--to", "up"]) == expected)
@@ -167,9 +178,20 @@ struct CommandsTests {
         #expect(validationMessage(["session", "move", "ws2", "--to", "up"]) == "provide a destination workspace or --to, not both")
     }
 
+    @Test func sessionMoveRejectsMultipleTargetsWithReorder() {
+        #expect(validationMessage(["session", "move", "--to", "up", "--target", "s1", "--target", "s2"])
+            == "session.move --target can be repeated only with a workspace or --after/--before")
+    }
+
     @Test func sessionMoveAfter() throws {
         let expected = ControlRequest(cmd: .sessionMove, target: "s1", args: ControlArgs(after: "s2"))
         #expect(try request(["session", "move", "--after", "s2", "--target", "s1"]) == expected)
+    }
+
+    @Test func sessionMoveAfterMultipleTargets() throws {
+        let expected = ControlRequest(cmd: .sessionMove, target: "s1",
+                                      args: ControlArgs(targets: ["s1", "s2"], after: "s3"))
+        #expect(try request(["session", "move", "--after", "s3", "--target", "s1", "--target", "s2"]) == expected)
     }
 
     @Test func sessionMoveBefore() throws {
@@ -675,6 +697,90 @@ struct CommandsTests {
         #expect(validationMessage(["quick", "text", "--lines", "0"]) == "--lines must be greater than 0")
     }
 
+    @Test func surfaceZoomDefaultsToggleActive() throws {
+        #expect(try request(["surface", "zoom"]) ==
+            ControlRequest(cmd: .surfaceZoom, target: "active", args: ControlArgs(mode: "toggle")))
+    }
+
+    @Test func surfaceZoomTargetsSurfaceID() throws {
+        let id = "surface:5E5B1C5B-75C5-49E6-8806-2C61D8D6BBA9:right"
+
+        #expect(try request(["surface", "zoom", "show", "--target", id]) ==
+            ControlRequest(cmd: .surfaceZoom, target: id, args: ControlArgs(mode: "show")))
+    }
+
+    @Test func surfaceZoomTargetsWindow() throws {
+        #expect(try request(["surface", "zoom", "hide", "--window", "win"]) ==
+            ControlRequest(cmd: .surfaceZoom, target: "active", args: ControlArgs(mode: "hide", window: "win")))
+    }
+
+    // MARK: - dashboard
+
+    @Test func dashboardOpenWithIdsAndFontSize() throws {
+        let expected = ControlRequest(cmd: .dashboard, args: ControlArgs(targets: ["s1", "s2"], fontSize: 12))
+        #expect(try request(["dashboard", "s1", "s2", "--font-size", "12"]) == expected)
+    }
+
+    @Test func dashboardOpenWithAutoSize() throws {
+        let expected = ControlRequest(cmd: .dashboard, args: ControlArgs(targets: ["s1", "s2"], autoSize: true))
+        #expect(try request(["dashboard", "s1", "s2", "--auto-size"]) == expected)
+    }
+
+    @Test func dashboardOpenTargetsWindow() throws {
+        let expected = ControlRequest(cmd: .dashboard, args: ControlArgs(targets: ["s1"], window: "win"))
+        #expect(try request(["dashboard", "s1", "--window", "win"]) == expected)
+    }
+
+    @Test func dashboardClose() throws {
+        #expect(try request(["dashboard", "--close"]) == ControlRequest(cmd: .dashboard, args: ControlArgs(close: true)))
+    }
+
+    @Test func dashboardRejectsFontSizeWithAutoSize() {
+        #expect(validationMessage(["dashboard", "s1", "--font-size", "12", "--auto-size"])
+            == "--font-size is mutually exclusive with --auto-size")
+    }
+
+    @Test func dashboardRejectsNonPositiveFontSize() {
+        #expect(validationMessage(["dashboard", "s1", "--font-size", "0"]) == "--font-size must be a positive number")
+    }
+
+    @Test func dashboardRejectsCloseWithIds() {
+        #expect(validationMessage(["dashboard", "s1", "--close"]) == "--close takes no ids, --mru, or font options")
+    }
+
+    @Test func dashboardRejectsCloseWithAutoSize() {
+        #expect(validationMessage(["dashboard", "--close", "--auto-size"]) == "--close takes no ids, --mru, or font options")
+    }
+
+    @Test func dashboardRejectsEmptyIdsWithoutClose() {
+        #expect(validationMessage(["dashboard"]) == "dashboard requires at least one session id (or --mru, or --close)")
+    }
+
+    @Test func dashboardMruAlone() throws {
+        #expect(try request(["dashboard", "--mru"]) == ControlRequest(cmd: .dashboard, args: ControlArgs(mru: true)))
+    }
+
+    @Test func dashboardMruWithAutoSizeAndWindow() throws {
+        let expected = ControlRequest(cmd: .dashboard, args: ControlArgs(window: "win", autoSize: true, mru: true))
+        #expect(try request(["dashboard", "--mru", "--auto-size", "--window", "win"]) == expected)
+    }
+
+    @Test func dashboardRejectsMruWithIds() {
+        #expect(validationMessage(["dashboard", "s1", "--mru"]) == "--mru cannot be combined with session ids")
+    }
+
+    @Test func dashboardRejectsMruWithClose() {
+        #expect(validationMessage(["dashboard", "--mru", "--close"]) == "--close takes no ids, --mru, or font options")
+    }
+
+    @Test func dashboardRejectsNegativeFontSize() {
+        #expect(validationMessage(["dashboard", "s1", "--font-size=-3"]) == "--font-size must be a positive number")
+    }
+
+    @Test func dashboardRejectsInfiniteFontSize() {
+        #expect(validationMessage(["dashboard", "s1", "--font-size=inf"]) == "--font-size must be a positive number")
+    }
+
     @Test func sidebarDefaultsToggle() throws {
         #expect(try request(["sidebar"]) == ControlRequest(cmd: .sidebar, args: ControlArgs(mode: "toggle")))
     }
@@ -740,6 +846,25 @@ struct CommandsTests {
 
     @Test func fontReset() throws {
         #expect(try request(["font", "reset"]) == ControlRequest(cmd: .fontReset, target: "active"))
+    }
+
+    @Test func fontIncWithPane() throws {
+        #expect(try request(["font", "inc", "--pane", "right", "--target", "s1"])
+            == ControlRequest(cmd: .fontInc, target: "s1", args: ControlArgs(pane: "right")))
+    }
+
+    @Test func fontDecWithPaneScratch() throws {
+        #expect(try request(["font", "dec", "--pane", "scratch"])
+            == ControlRequest(cmd: .fontDec, target: "active", args: ControlArgs(pane: "scratch")))
+    }
+
+    @Test func fontResetWithPaneAndWindow() throws {
+        #expect(try request(["font", "reset", "--pane", "left", "--window", "w1"])
+            == ControlRequest(cmd: .fontReset, target: "active", args: ControlArgs(window: "w1", pane: "left")))
+    }
+
+    @Test func fontRejectsInvalidPane() throws {
+        #expect(validationMessage(["font", "inc", "--pane", "other"]) == "--pane must be left, right, or scratch")
     }
 
     @Test func keymapReload() throws {
@@ -936,6 +1061,11 @@ struct CommandsTests {
     @Test func sessionRenameWithWindow() throws {
         let expected = ControlRequest(cmd: .sessionRename, target: "active", args: ControlArgs(name: "build", window: "w1"))
         #expect(try request(["session", "rename", "build", "--window", "w1"]) == expected)
+    }
+
+    @Test func sessionRevealWithWindow() throws {
+        let expected = ControlRequest(cmd: .sessionReveal, target: "s1", args: ControlArgs(window: "w1"))
+        #expect(try request(["session", "reveal", "--target", "s1", "--window", "w1"]) == expected)
     }
 
     @Test func sessionCloseWithWindow() throws {

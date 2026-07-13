@@ -35,7 +35,7 @@ struct WorkspaceSidebar: NSViewRepresentable {
         // sidebar tree runs flush below the titlebar in every toolbar mode); a custom row height restores
         // the roomy source-list-like row size that .plain's .default would otherwise shrink to ~17px.
         outline.rowSizeStyle = .custom
-        outline.rowHeight = 28
+        outline.rowHeight = AppSettings.sidebarRowHeight(fontSize: GhosttyApp.shared.sidebarFontSize)
         outline.floatsGroupRows = false
         outline.indentationPerLevel = 14
         outline.autosaveExpandedItems = false
@@ -52,6 +52,8 @@ struct WorkspaceSidebar: NSViewRepresentable {
         // the sidebar isn't first responder (focus normally lives in the terminal). SidebarRowView
         // draws the themed selection pill itself in drawBackground for every state.
         outline.selectionHighlightStyle = .none
+        outline.allowsMultipleSelection = true
+        outline.allowsEmptySelection = true
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("main"))
         column.resizingMask = .autoresizingMask
@@ -59,9 +61,12 @@ struct WorkspaceSidebar: NSViewRepresentable {
         outline.outlineTableColumn = column
 
         // native drag-and-drop: session rows reorder within / move across workspaces; workspace
-        // rows reorder among themselves. Registering BOTH types is load-bearing — without the
-        // workspace type AppKit never delivers validate/accept for a workspace drag.
-        outline.registerForDraggedTypes([sessionPasteboardType, workspacePasteboardType])
+        // rows reorder among themselves; Finder folder drops create sessions rooted at those folders.
+        // Registering BOTH private types is load-bearing — without the workspace type AppKit never
+        // delivers validate/accept for a workspace drag.
+        outline.registerForDraggedTypes([sessionPasteboardType, workspacePasteboardType, .fileURL])
+        // Sidebar rows are app-private move sources. Finder folder import is independent: Finder owns
+        // that external source and supplies `.fileURL`, while agterm rows export no public representation.
         outline.setDraggingSourceOperationMask(.move, forLocal: true)
         outline.setDraggingSourceOperationMask([], forLocal: false)
 
@@ -108,6 +113,7 @@ struct WorkspaceSidebar: NSViewRepresentable {
         // re-reconcile via the .agtermAppearanceChanged notification (appearanceChanged), like toolbarMode.
         _ = store.workspaces.map { ($0.id, $0.name, $0.unseenCount, $0.sessions.map { ($0.id, $0.displayName, $0.hasSplit, $0.unseenCount, $0.agentIndicator, $0.flagged) }) }
         _ = store.selectedSessionID
+        _ = store.sidebarSelectionIDs
         // sidebarMode flips the whole data source between the tree and the flat flagged list; reading it
         // here registers the observer so a mode change re-invokes updateNSView and reconcile rebuilds.
         _ = store.sidebarMode
@@ -161,11 +167,20 @@ struct WorkspaceSidebar: NSViewRepresentable {
         /// reveal or focus zoom-in never burns a workspace's deliberately-persisted collapse. Only a genuine
         /// user toggle (row click / disclosure triangle) — which fires the callback with this false —
         /// persists. `expandAll`/`collapseOthers` set it too and persist once explicitly at the end.
-        private var suppressExpansionPersist = false
+        var suppressExpansionPersist = false
         /// Scheduled single-click workspace expand/collapse, deferred by the double-click interval so a
         /// double-click (rename) can cancel it — otherwise the first click of a rename double-click would
         /// flip the workspace open/closed on its way into edit mode. See `handleSingleClick`.
         var pendingRowToggle: DispatchWorkItem?
+        /// Scheduled spring-loaded workspace expand while a drag hovers over a collapsed workspace row.
+        /// View-only like selection reveal: it opens the target for this drag without persisting expansion.
+        var pendingSpringLoadedExpansion: (workspaceID: UUID, workItem: DispatchWorkItem)?
+        /// A workspace actually opened by spring-loading during the current drag. Finder-style spring
+        /// navigation is transient: leaving/cancelling collapses this row back to its pre-drag state.
+        var springLoadedWorkspaceID: UUID?
+        /// Finder file URLs resolved for the current AppKit dragging sequence. Validation runs on every
+        /// mouse move, so caching keeps network-volume metadata checks out of the hot path.
+        var cachedDirectoryDrop: (sequenceNumber: Int, urls: [URL], exceedsLimit: Bool)?
 
         /// Stable pseudo-workspace id for the flat flagged group's `TreeShape`, so within flagged mode only
         /// a change to the flagged session list (not a per-call fresh id) triggers a rebuild.
@@ -179,6 +194,12 @@ struct WorkspaceSidebar: NSViewRepresentable {
         /// reconcile reloads only the rows whose content changed. An absent key ≠ any real content.
         private var lastRowContent: [UUID: RowContent] = [:]
 
+        /// The sidebar font size last applied to the outline (row height + row fonts). `.agtermAppearanceChanged`
+        /// fires for every settings change (theme, colors, toggles), but the font size isn't part of the
+        /// per-row content diff, so `appearanceChanged` compares against this and only rebuilds when it
+        /// actually changed — avoiding a full reload on every unrelated appearance change.
+        private var lastSidebarFontSize: CGFloat = CGFloat(AppSettings.defaultSidebarFontSize)
+
         /// Centered hint shown over the (empty) outline in flagged mode when nothing is flagged. Floats in
         /// the scroll view above the document, hidden otherwise.
         private weak var emptyStateLabel: NSTextField?
@@ -188,6 +209,9 @@ struct WorkspaceSidebar: NSViewRepresentable {
             self.actions = actions
             self.renameController = SidebarRenameController(store: store)
             super.init()
+            // seed from the live mirror (SettingsModel applied the persisted size at launch, before any
+            // window's sidebar is built) so the first appearanceChanged doesn't rebuild for no change.
+            lastSidebarFontSize = GhosttyApp.shared.sidebarFontSize
             renameController.onRenameEnded = { [weak self] in self?.focusActiveTerminal() }
             // the menu/palette can't reach the inline editor directly, so they post a
             // notification and this coordinator starts the edit on the selected row.
@@ -209,7 +233,10 @@ struct WorkspaceSidebar: NSViewRepresentable {
                                                    name: .agtermAppearanceChanged, object: nil)
         }
 
-        deinit { NotificationCenter.default.removeObserver(self) }
+        isolated deinit {
+            pendingSpringLoadedExpansion?.workItem.cancel()
+            NotificationCenter.default.removeObserver(self)
+        }
 
         /// Re-tint the visible rows' text/icon to the current selection state and redraw the selection
         /// pills, without a reloadData — used both when the selection changes (AppKit doesn't redraw on
@@ -245,6 +272,7 @@ struct WorkspaceSidebar: NSViewRepresentable {
         }
 
         @objc private func appearanceChanged() {
+            applySidebarFontSizeIfChanged()
             refreshSelectionAppearance()
             applyThemeAppearance()
             // a settings change may have flipped the badge-visibility toggle; reconcile so the gated
@@ -257,6 +285,19 @@ struct WorkspaceSidebar: NSViewRepresentable {
             // re-apply the sidebar content inset in case a settings change requires recomputing it (the
             // inset itself is mode-independent, so this is a cheap re-assert, not a per-mode recalculation).
             applySidebarContentInset(outlineView?.enclosingScrollView)
+        }
+
+        /// Re-apply the sidebar row height + fonts when the sidebar font-size setting changed. The font size
+        /// isn't part of the per-row content diff `reconcile` uses, so a change needs an explicit row-height
+        /// update and a full `rebuildAndReload` (which re-runs the cell builder, re-setting each row's font).
+        /// Guarded on the tracked value so an unrelated appearance change (theme/color/toggle) doesn't force
+        /// a needless full reload.
+        private func applySidebarFontSizeIfChanged() {
+            let size = GhosttyApp.shared.sidebarFontSize
+            guard size != lastSidebarFontSize else { return }
+            lastSidebarFontSize = size
+            outlineView?.rowHeight = AppSettings.sidebarRowHeight(fontSize: size)
+            rebuildAndReload()
         }
 
         /// Re-apply the status glyph on every visible session row so a global agent-status color change
@@ -611,10 +652,18 @@ struct WorkspaceSidebar: NSViewRepresentable {
                 outline.expandItem(owner)
                 suppressExpansionPersist = false
             }
+            var rows = IndexSet()
+            let selectedIDs = store.sidebarSelectionIDs.isEmpty ? [selectedID] : store.sidebarSelectionIDs
+            for id in selectedIDs {
+                guard let selectedNode = nodeCache[id], selectedNode.kind == .session else { continue }
+                let selectedRow = outline.row(forItem: selectedNode)
+                if selectedRow >= 0 { rows.insert(selectedRow) }
+            }
             let row = outline.row(forItem: node)
             guard row >= 0 else { return }
-            if outline.selectedRow != row {
-                outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+            if rows.isEmpty { rows.insert(row) }
+            if outline.selectedRowIndexes != rows {
+                outline.selectRowIndexes(rows, byExtendingSelection: false)
             }
             if selectionChanged {
                 outline.scrollRowToVisible(row)
@@ -633,15 +682,27 @@ struct WorkspaceSidebar: NSViewRepresentable {
             // style AppKit won't redraw rows on its own).
             refreshSelectionAppearance()
             guard !applyingSelection, let outline = outlineView else { return }
-            let row = outline.selectedRow
-            guard row >= 0, let node = outline.item(atRow: row) as? SidebarNode, node.kind == .session else {
+            let selectedIDs = outline.selectedRowIndexes.compactMap { row -> UUID? in
+                guard let node = outline.item(atRow: row) as? SidebarNode, node.kind == .session else { return nil }
+                return node.id
+            }
+            let clickedRow = outline.clickedRow
+            let clickedID = (clickedRow >= 0 ? outline.item(atRow: clickedRow) as? SidebarNode : nil).flatMap { node -> UUID? in
+                node.kind == .session ? node.id : nil
+            }
+            let activeID = clickedID.flatMap { id in
+                clickedRow >= 0 && outline.selectedRowIndexes.contains(clickedRow) ? id : nil
+            } ?? store.selectedSessionID.flatMap { id in selectedIDs.contains(id) ? id : nil }
+                ?? selectedIDs.last
+            guard let activeID else {
+                store.setSidebarSelection(selectedIDs)
                 return
             }
             // a genuine user row click (the applyingSelection guard above skips programmatic sync, so
             // auto-follow's own jump never reaches here) counts as activity: it buys the full idle grace
             // before auto-follow can pull the selection back.
             store.noteUserActivity()
-            store.selectSession(node.id)
+            store.selectSession(activeID, sidebarSelection: selectedIDs)
             // land on the selected session's blocked pane when it carries a pane-tagged block (a no-op
             // otherwise), async so it runs after the selection + the sidebar's own focus-restore settle.
             DispatchQueue.main.async { [weak self] in self?.actions.revealActiveBlockedPane() }
@@ -736,11 +797,20 @@ final class SidebarOutlineView: NSOutlineView {
     // click. Programmatic selection (palette/Ctrl-Tab) never bounces, so it's already smooth.
     override var acceptsFirstResponder: Bool { false }
 
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        super.draggingExited(sender)
+        (delegate as? WorkspaceSidebar.Coordinator)?.finishDraggingSequence()
+    }
+
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
         let row = self.row(at: point)
-        // select the right-clicked row so the menu's context matches
-        if row >= 0 { selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false) }
+        // Keep a multi-selection when right-clicking one of its selected rows; narrow to the clicked
+        // session when right-clicking outside the selection, matching standard Mac list behavior.
+        if row >= 0, let node = item(atRow: row) as? SidebarNode, node.kind == .session,
+           !selectedRowIndexes.contains(row) {
+            selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        }
         return (delegate as? WorkspaceSidebar.Coordinator)?.menu(forRow: row)
     }
 

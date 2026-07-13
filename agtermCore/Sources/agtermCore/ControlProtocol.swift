@@ -14,6 +14,7 @@ public enum Command: String, Codable, Sendable {
     case sessionSelect = "session.select"
     case sessionGo = "session.go"
     case sessionRename = "session.rename"
+    case sessionReveal = "session.reveal"
     case sessionMove = "session.move"
     case workspaceMove = "workspace.move"
     case workspaceFocus = "workspace.focus"
@@ -26,6 +27,8 @@ public enum Command: String, Codable, Sendable {
     case sessionScratch = "session.scratch"
     case sessionFocus = "session.focus"
     case sessionResize = "session.resize"
+    case surfaceZoom = "surface.zoom"
+    case dashboard
     case sessionCopy = "session.copy"
     case sessionPaste = "session.paste"
     case sessionSelectAll = "session.selectall"
@@ -79,6 +82,9 @@ public struct ControlArgs: Codable, Sendable, Equatable {
     public var name: String?
     /// Working directory for `session.new`.
     public var cwd: String?
+    /// Additional session targets for batch-capable commands (`session.close`, `session.move`). When set,
+    /// the command uses this ordered list instead of the top-level single `target`.
+    public var targets: [String]?
     /// Target workspace for `session.new` (the workspace to add to) and `session.move` (the destination).
     /// Resolved by id / unique prefix / `active`, never by name — use `workspaceName` for name targeting.
     public var workspace: String?
@@ -92,7 +98,8 @@ public struct ControlArgs: Codable, Sendable, Equatable {
     public var text: String?
     /// Whether `session.type` may select a never-shown session to realize its surface.
     public var select: Bool?
-    /// Mode for `session.split` / `quick` (`on|off|toggle`, `show|hide|toggle` for quick),
+    /// Mode for `session.split` / `quick` / `surface.zoom` (`on|off|toggle`,
+    /// `show|hide|toggle` for quick/surface zoom),
     /// `session.flag` (`on|off|toggle|clear`), `sidebar.mode` (`tree|flagged|toggle`),
     /// `workspace.focus` (`on|off|toggle`), and `session.background` (`image|text|color|clear`).
     public var mode: String?
@@ -191,8 +198,23 @@ public struct ControlArgs: Codable, Sendable, Equatable {
     /// form), and the reserved value `none` clears it. Names must be bundled themes.
     public var light: String?
     public var dark: String?
+    /// Whether `dashboard` CLOSES the open dashboard instead of opening one (the CLI's `--close`). Mutually
+    /// exclusive with targets (the ids to open) and with the font flags — closing takes no other argument.
+    public var close: Bool?
+    /// The absolute cell font size in points for `dashboard` (the CLI's `--font-size`); must be positive.
+    /// Mutually exclusive with `autoSize`.
+    public var fontSize: Double?
+    /// For `dashboard`, size the cells RELATIVE to the Settings default font size, shrinking as the grid
+    /// grows so dense grids stay readable (the CLI's `--auto-size`). Mutually exclusive with `fontSize`.
+    public var autoSize: Bool?
+    /// For `dashboard`, populate the grid from the target window's most-recently-used sessions (up to 9,
+    /// fewer if the window has fewer) instead of explicit ids (the CLI's `--mru`). Mutually exclusive with
+    /// `targets` and `close`; composes with the font flags. The MRU resolution is app-side (it needs the
+    /// store's recency), so this only signals the intent.
+    public var mru: Bool?
 
-    public init(name: String? = nil, cwd: String? = nil, workspace: String? = nil, workspaceName: String? = nil,
+    public init(name: String? = nil, cwd: String? = nil, targets: [String]? = nil,
+                workspace: String? = nil, workspaceName: String? = nil,
                 createWorkspace: Bool? = nil, text: String? = nil, select: Bool? = nil, mode: String? = nil,
                 command: String? = nil, wait: Bool? = nil, sizePercent: Int? = nil, full: Bool? = nil,
                 follow: Bool? = nil, window: String? = nil,
@@ -203,9 +225,11 @@ public struct ControlArgs: Codable, Sendable, Equatable {
                 ratio: Double? = nil, ratioDelta: Double? = nil,
                 path: String? = nil, color: String? = nil, opacity: Double? = nil, fit: String? = nil,
                 position: String? = nil, repeats: Bool? = nil, all: Bool? = nil, lines: Int? = nil,
-                light: String? = nil, dark: String? = nil) {
+                light: String? = nil, dark: String? = nil,
+                close: Bool? = nil, fontSize: Double? = nil, autoSize: Bool? = nil, mru: Bool? = nil) {
         self.name = name
         self.cwd = cwd
+        self.targets = targets
         self.workspace = workspace
         self.workspaceName = workspaceName
         self.createWorkspace = createWorkspace
@@ -245,6 +269,10 @@ public struct ControlArgs: Codable, Sendable, Equatable {
         self.lines = lines
         self.light = light
         self.dark = dark
+        self.close = close
+        self.fontSize = fontSize
+        self.autoSize = autoSize
+        self.mru = mru
     }
 }
 
@@ -259,6 +287,26 @@ public struct ControlRequest: Codable, Sendable, Equatable {
         self.cmd = cmd
         self.target = target
         self.args = args
+    }
+}
+
+/// A terminal surface as projected into the `tree` response. `id` is the stable control address to pass
+/// to `surface.zoom`; `kind` is the user-facing surface name (`left`, `right`, `scratch`, `overlay`).
+/// `active`/`visible` are derived from the session's own flags (overlay/scratch/splitFocused), NOT from
+/// terminal zoom — and `visible` reads false for a pane behind a FLOATING overlay even though that pane
+/// is visually on screen (the derivation treats any open overlay as covering). Address by `id`/`kind`,
+/// not by these flags; read the window's zoom state from the tree's top-level `zoomedSurface`.
+public struct ControlSurfaceNode: Codable, Sendable, Equatable {
+    public let id: String
+    public let kind: String
+    public let active: Bool
+    public let visible: Bool
+
+    public init(id: String, kind: String, active: Bool, visible: Bool) {
+        self.id = id
+        self.kind = kind
+        self.active = active
+        self.visible = visible
     }
 }
 
@@ -317,13 +365,32 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
     /// side of the notification badge: `notify` (and terminal OSC 9/777) raise it, `session.seen` clears it.
     /// Ephemeral like `status` — never persisted, so it resets to nil on restart.
     public let unseen: Int?
+    /// The default/left pane's live font size in points, resolved via `addressableSurface`: the main pane,
+    /// or the promoted split survivor once the primary has exited (the same pane `font --pane left`, and the
+    /// default, writes). Nil when that pane isn't realized (omitted from the JSON). Reflects the live cmd
+    /// +/- value; the main pane's size is persisted across relaunch, but a promoted survivor's is live-only.
+    public let fontSize: Double?
+    /// The split (right) pane's live font size in points, or nil when the session has no realized split pane
+    /// (omitted). The read side of `font --pane right` — the split's font is otherwise unobservable, being
+    /// live-only (not persisted), so record it here before changing it.
+    public let splitFontSize: Double?
+    /// The scratch terminal's live font size in points, or nil when no scratch surface is realized (omitted).
+    /// The read side of `font --pane scratch` (also live-only).
+    public let scratchFontSize: Double?
+    /// Addressable terminal surfaces owned by this session, or nil when talking to a server that
+    /// predates `surface.zoom` (omitted from the JSON — the optional-field pattern every post-v1 tree
+    /// addition uses, keeping Codable synthesized). Hidden-but-alive surfaces are included so control
+    /// clients can zoom them without mutating split/scratch visibility first.
+    public let surfaces: [ControlSurfaceNode]?
 
     public init(id: String, name: String, cwd: String, title: String? = nil, active: Bool, split: Bool,
                 splitRatio: Double? = nil, splitFocused: Bool? = nil,
                 overlay: Bool = false, overlaySizePercent: Int? = nil, scratch: Bool = false, flagged: Bool = false,
                 foreground: [String]? = nil, splitForeground: [String]? = nil, status: String? = nil,
                 statusPane: String? = nil, statusBlink: Bool? = nil, statusColor: String? = nil,
-                background: BackgroundWatermark? = nil, unseen: Int? = nil) {
+                background: BackgroundWatermark? = nil, unseen: Int? = nil,
+                fontSize: Double? = nil, splitFontSize: Double? = nil, scratchFontSize: Double? = nil,
+                surfaces: [ControlSurfaceNode]? = nil) {
         self.id = id
         self.name = name
         self.cwd = cwd
@@ -344,6 +411,10 @@ public struct ControlSessionNode: Codable, Sendable, Equatable {
         self.statusColor = statusColor
         self.background = background
         self.unseen = unseen
+        self.fontSize = fontSize
+        self.splitFontSize = splitFontSize
+        self.scratchFontSize = scratchFontSize
+        self.surfaces = surfaces
     }
 }
 
@@ -399,15 +470,52 @@ public struct ControlTree: Codable, Sendable, Equatable {
     /// (not on `window.list`), since a GUI-only ⌃` toggle bypasses the command path and would leave a
     /// cached copy stale — read the live tree copy instead. nil in a host-produced tree with no app closure.
     public let quickVisible: Bool?
+    /// The control id of the surface terminal zoom currently fills the projected window with —
+    /// `surface:<session-id>:<kind>` for a session surface, `quick` for the quick terminal — or
+    /// nil/omitted when nothing is zoomed. LIVE — resolved app-side per request from the window's
+    /// `TerminalZoomController` — the read side of the write-only `surface.zoom` command, so a script
+    /// can check "is it already zoomed" and record-then-restore. `tree`-only (not on `window.list`),
+    /// like `quickVisible`: the GUI toggle bypasses the command path and would leave a cached copy stale.
+    public let zoomedSurface: String?
+    /// The pane refs (`<session-uuid>:left` for a primary pane, `<session-uuid>:right` for a split pane, in
+    /// grid order) of the cells the open dashboard shows, or nil/omitted when no dashboard is open. Each cell
+    /// is a session+pane, so a split session appears as TWO refs (`:left` and `:right`). LIVE — resolved
+    /// app-side per request from the projected window's `DashboardController` — the read side of the
+    /// write-only `dashboard` command, so a script can see which panes are on the grid. `tree`-only (not on
+    /// `window.list`), like `zoomedSurface`: the keyboard-driven dashboard bypasses the command path and
+    /// would leave a cached copy stale. nil in a host-produced tree with no app closure.
+    public let dashboardMembers: [String]?
+    /// The pane ref (`<session-uuid>:left`/`:right`) of the dashboard's currently highlighted cell (the one
+    /// Enter jumps into, focusing that exact pane), or nil/omitted when no dashboard is open. LIVE — resolved
+    /// app-side per request from the window's `DashboardController` — the read side of the keyboard highlight
+    /// nav. `tree`-only, like `dashboardMembers`.
+    public let dashboardHighlighted: String?
+    /// The absolute font size in points applied to the dashboard cells, or nil/omitted when no dashboard is
+    /// open OR the font is untouched (the members keep their own size). LIVE — resolved app-side per request
+    /// from the window's `DashboardController` — the read side of `dashboard --font-size`/`--auto-size`.
+    /// `tree`-only, like `dashboardMembers`.
+    public let dashboardFontSize: Double?
+    /// The dashboard's font mode — `auto` (`--auto-size`), `fixed` (`--font-size`), or `untouched` — or
+    /// nil/omitted when no dashboard is open. LIVE — resolved app-side per request from the window's
+    /// `DashboardController` — the read side of the font flags. `tree`-only, like `dashboardMembers`.
+    public let dashboardFontMode: String?
 
     public init(workspaces: [ControlWorkspaceNode], idleMs: Int? = nil, autoFollowMs: Int? = nil,
-                sidebarVisible: Bool? = nil, sidebarMode: String? = nil, quickVisible: Bool? = nil) {
+                sidebarVisible: Bool? = nil, sidebarMode: String? = nil, quickVisible: Bool? = nil,
+                zoomedSurface: String? = nil, dashboardMembers: [String]? = nil,
+                dashboardHighlighted: String? = nil, dashboardFontSize: Double? = nil,
+                dashboardFontMode: String? = nil) {
         self.workspaces = workspaces
         self.idleMs = idleMs
         self.autoFollowMs = autoFollowMs
         self.sidebarVisible = sidebarVisible
         self.sidebarMode = sidebarMode
         self.quickVisible = quickVisible
+        self.zoomedSurface = zoomedSurface
+        self.dashboardMembers = dashboardMembers
+        self.dashboardHighlighted = dashboardHighlighted
+        self.dashboardFontSize = dashboardFontSize
+        self.dashboardFontMode = dashboardFontMode
     }
 }
 
@@ -491,6 +599,9 @@ public struct ControlResult: Codable, Sendable, Equatable {
     /// attribution), and the total match count for `session.search` (whose "N of M" display string rides
     /// in `text`).
     public var count: Int?
+    /// Number of sessions actually changed by a batch mutation (`session.close` or `session.move`).
+    /// Kept separate from `count`, whose CLI rendering is specific to diagnostics/search results.
+    public var affected: Int?
     /// The current/affected theme name for `theme.set` (echo) and `theme.list` (current); nil =
     /// ghostty's built-in colors ("default ghostty"), distinct from the seeded `agterm` app default.
     public var theme: String?
@@ -509,6 +620,7 @@ public struct ControlResult: Codable, Sendable, Equatable {
 
     public init(id: String? = nil, tree: ControlTree? = nil, text: String? = nil,
                 windows: [ControlWindowNode]? = nil, exitCode: Int? = nil, count: Int? = nil,
+                affected: Int? = nil,
                 theme: String? = nil, themes: [String]? = nil, ratio: Double? = nil,
                 sync: Bool? = nil, light: String? = nil, dark: String? = nil) {
         self.id = id
@@ -517,6 +629,7 @@ public struct ControlResult: Codable, Sendable, Equatable {
         self.windows = windows
         self.exitCode = exitCode
         self.count = count
+        self.affected = affected
         self.theme = theme
         self.themes = themes
         self.ratio = ratio

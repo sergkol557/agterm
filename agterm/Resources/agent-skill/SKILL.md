@@ -14,8 +14,8 @@ description: >
   feature request / question as a GitHub Discussion.
 when_to_use: >
   Trigger on: agterm, agtermctl, agterm control socket, session.new, session.close, session.type,
-  session.split, session.scratch, session.focus, session.resize, session.go, session.copy, session.paste, session.selectall, session.text, session.search, session.status,
-  session.flag, session.seen, session.background, session.overlay, workspace.new, workspace.select, workspace.move, workspace.focus, window.new, window.list,
+  session.split, session.scratch, session.focus, session.resize, surface.zoom, dashboard, session.go, session.copy, session.paste, session.selectall, session.text, session.search, session.status,
+  session.flag, session.seen, session.reveal, session.background, session.overlay, workspace.new, workspace.select, workspace.move, workspace.focus, window.new, window.list,
   window.select, window.resize, window.move, window.zoom, window.fullscreen, quick terminal, sidebar, sidebar.mode, sidebar.expand, sidebar.collapse, flagged, notify, font.inc, keymap.reload, config.reload,
   theme.set, theme.list, select theme, edit keymap, show an image, display an image inline, show-image,
   AGTERM_SESSION_ID, AGTERM_SOCKET, and asks to drive or script agterm. Also: troubleshoot agterm,
@@ -65,10 +65,11 @@ is not on PATH, the user can install it, or you invoke it by absolute path.
   `--socket "$AGTERM_SOCKET"`.
 - `--socket` and other options go **after** the subcommand: `agtermctl tree --json`, not
   `agtermctl --json tree`.
-- Add `--json` to any command to get the raw JSON response (machine-readable). Without it, mutations
-  print `ok` and `tree`/`list` print a human listing.
-- One request per invocation. Mutating commands return the affected/new id; create commands
-  (`session new`, `workspace new`, `window new`) print the new id.
+- Add `--json` to any command to get the raw JSON response (machine-readable). Without it, ordinary
+  mutations print `ok`, batch close/move prints the affected session count, and `tree`/`list` print a
+  human listing.
+- One request per invocation. Mutating commands return the affected/new id; batch session mutations return
+  the number actually changed. Create commands (`session new`, `workspace new`, `window new`) print the new id.
 
 ## The model
 
@@ -80,9 +81,11 @@ Separately, each window has one **quick terminal** (a scratch overlay at 90% of 
 of the tree).
 
 Inspect the live tree any time with `agtermctl tree --json` (workspaces → sessions, each with
-`id`, `name`, `cwd`, `title`, `active`, `split`, `overlay`, `scratch`, `status`, `background`). `title` is the raw OSC
+`id`, `name`, `cwd`, `title`, `active`, `split`, `overlay`, `scratch`, `status`, `background`, `surfaces`). `title` is the raw OSC
 terminal title (e.g. a remote host over SSH), omitted when none was reported — read it when a
-session's local `cwd` is stale because it's connected to a remote. The tree object also carries five
+session's local `cwd` is stale because it's connected to a remote. `surfaces[].id` is the
+control address for `surface zoom` (`left`, `right`, `scratch`, or `overlay`), including
+hidden-but-alive split/scratch surfaces. The tree object also carries five
 read-only top-level fields: `idleMs` (ms since the last user input in the window), `autoFollowMs`
 (the Auto-follow timeout in ms, omitted when Disabled), `sidebarVisible` (whether the window's
 sidebar is currently shown — the read side of the write-only `sidebar` command), `sidebarMode`
@@ -113,7 +116,7 @@ you work. For any session-scoped command meant to act on *this* session — `ove
 `type`, `text`, `background`, `status`, `copy`, … — pass `--target "$AGTERM_SESSION_ID"`. Omit it and
 you open overlays / type into whatever the user has selected, not your own session.
 
-## Command summary (57 commands)
+## Command summary (60 commands)
 
 Run `agtermctl <area> <cmd> --help` for exact flags. Full detail in **reference.md**; recipes in
 **examples.md**.
@@ -132,9 +135,17 @@ omitted for a full-pane overlay or no overlay so gate on `overlay` first; the re
 resize` for a record-then-restore zoom), `splitRatio` (the left-pane divider fraction 0.05–0.95 of a
 session that has a split — shown or hidden; omitted when there's no split or the ratio was never set (at
 the default 0.5) —
-the read side of `session resize`, record it to restore the exact divider), and `splitFocused`
+the read side of `session resize`, record it to restore the exact divider), `splitFocused`
 (which pane holds focus in a session that has a split — `true` = split/right, `false` = main/left; omitted
-when there's no split; the read side of `session focus`, record it to restore focus).
+when there's no split; the read side of `session focus`, record it to restore focus), and `surfaces`
+(`id`, `kind`, `active`, `visible`) for `surface zoom`. The tree top level carries `zoomedSurface`
+(the control id of the currently zoomed surface, omitted when nothing is zoomed — the read side of
+`surface zoom`, so a script can check the zoom state and record-then-restore). It also carries the read
+side of the `dashboard` command (all omitted when no dashboard is open): `dashboardMembers` (the pane refs
+the open dashboard shows, in grid order — `<session-id>:left` for a primary pane, `<session-id>:right` for
+a split pane, so a split session appears as both), `dashboardHighlighted` (the highlighted cell's pane ref —
+the one Enter jumps into, focusing that exact pane), `dashboardFontSize` (the absolute font size in points
+applied to the cells, omitted when untouched), and `dashboardFontMode` (`auto`|`fixed`|`untouched`).
 
 **workspace** — `new [name]` · `rename <name>` · `delete` · `select` · `move --to up|down|top|bottom` ·
 `focus [on|off|toggle]` (collapse the sidebar tree to a single workspace; read back which workspace is
@@ -151,11 +162,15 @@ focused from the tree workspace node's `focused` flag).
   after/before an anchor session (id/prefix/`active`) instead of appending — the anchor carries its own
   workspace, so it's mutually exclusive with `--workspace`/`--workspace-name`. `new --after active` =
   create right after the current session.
-- `close` · `select` · `rename <name>`.
+- `close [--target T ...]` — close one session, or repeat `--target` to close a batch with one
+  grace-period undo.
+- `select` · `rename <name>` · `reveal` (select the focused pane's cwd in Finder).
 - `go --to next|prev|first|last|next-attention|prev-attention` — move the selection between sessions.
 - `move <workspace>` (relocate) or `move --to up|down|top|bottom` (reorder within the workspace) or
   `move --after SID | --before SID` (place after/before an anchor session; the anchor carries its own
-  workspace, so this relocates + positions in one shot, even cross-workspace).
+  workspace, so this relocates + positions in one shot, even cross-workspace). For workspace and
+  after/before placement, repeat `--target` to move several sessions as one ordered block. Do not repeat
+  `--target` with `--to up|down|top|bottom`.
 - `type <text> [--stdin] [--select] [--pane left|right|scratch]` — inject keystrokes (real typing, Enter
   included) into the main pane, the split pane with `--pane right`, or the scratch terminal (even hidden)
   with `--pane scratch`. Pass `--target "$AGTERM_SESSION_ID"` to type into YOUR session, not the user's
@@ -213,6 +228,33 @@ focused from the tree workspace node's `focused` flag).
 `zoom <id>` (maximize-to-screen toggle, the double-click-header gesture; a plain green-button click does full screen) ·
 `fullscreen <id>` (toggle native macOS full screen, the green-button / ⌃⌘F action).
 
+**surface** — `zoom [show|hide|toggle] [--target surface:<session-id>:left|right|scratch|overlay|quick] [--window W]`
+— zoom a terminal surface to fill the window (sidebar hidden; a slim title-bar strip with an exit
+button remains). Omit `--target` to use the active surface;
+copy an explicit surface id from `tree --json` to address a hidden split/scratch or a background
+session (`quick` is the id returned for a quick-terminal zoom). `hide` exits zoom; `toggle`
+enters/exits only this zoom mode, not macOS window zoom.
+
+**dashboard** — `dashboard <ids…> [--font-size N | --auto-size] [--window W]` opens a view-only grid
+showing the named sessions' live panes; `dashboard --mru [--font-size N | --auto-size] [--window W]`
+opens the window's most-recently-used sessions instead of naming ids; `dashboard --close [--window W]`
+closes it. The cell unit is a session+pane: a non-split session is one cell, and a SPLIT session shows as
+TWO cells (its left/primary pane and its right/split pane). View-only: no cell takes input — the keyboard
+drives it (arrows move the highlight, Enter jumps into the highlighted session AND focuses that exact pane
+then closes, Esc closes). `--font-size N` sets an absolute cell font in points; `--auto-size` sizes cells
+relative to the Settings default font, shrinking as the grid grows (the two are mutually exclusive; a
+non-positive size is rejected). The 9-cell cap counts PANES (laid out `ceil(sqrt(n))`), so a set whose
+panes exceed 9 is capped to the first 9 panes and the dropped-pane count is reported; ids are deduped and
+honor `--window` (default frontmost). `--mru` is mutually exclusive with explicit ids and `--close`, and
+composes with the font flags. Read the state back from the tree's top-level `dashboardMembers`
+(pane refs `<id>:left`/`<id>:right`, in grid order) / `dashboardHighlighted` (a pane ref) /
+`dashboardFontSize`/`dashboardFontMode`. Zoom and the dashboard are mutually exclusive: opening one CLOSES
+the other. Opening/closing resizes each pane's pty to its cell, so programs may redraw — view-only
+means no input, not no process effect. The most-recently-used grid also has a GUI opener: **⌘⇧D** (the
+`dashboard` built-in action), **Navigate ▸ Dashboard**, and the command palette's **Dashboard** entry
+TOGGLE the frontmost window's MRU dashboard auto-sized (identical to `dashboard --mru --auto-size`); no new
+control command, the socket `dashboard` command is unchanged.
+
 **quick** — `[show|hide|toggle]` (visibility; read back from the tree's `quickVisible`) ·
 `type TEXT` (or `--stdin`) inject keystrokes into the frontmost window's quick terminal ·
 `text [--all] [--lines N]` read its screen back — the twins of `session type`/`session text`,
@@ -227,7 +269,7 @@ Visibility/mode act on the frontmost window; `expand`/`collapse` default to the 
 
 **notify** — `notify <body> [--title T]` — post a desktop notification attributed to a session. To signal that you need the user, prefer `session status` (`blocked`/`completed`), a persistent typed attention state rather than a one-shot banner; keep `notify` for a one-off nudge.
 
-**font** — `font inc|dec|reset` — font size on the focused surface.
+**font** — `font inc|dec|reset [--pane left|right|scratch]` — change a session pane's font size (omitted/`left` = main pane, `right` = the split pane, `scratch` = the scratch terminal). Read the resulting size back from `tree` (`fontSize`/`splitFontSize`/`scratchFontSize` per pane).
 
 **keymap** — `keymap reload` — re-read `keymap.conf` (prints the parse-diagnostic count).
 
@@ -277,7 +319,7 @@ Full detail, templates, and the exact `gh` commands are in **troubleshooting.md*
 ## Reference files
 
 - **reference.md** — full per-command detail: every flag, the JSON return shapes
-  (`result.id`/`text`/`exitCode`/`count`/`tree`/`windows`), error strings, the scratch/overlay/split
+  (`result.id`/`text`/`exitCode`/`count`/`affected`/`tree`/`windows`), error strings, the scratch/overlay/split
   lifecycle, and the keymap.conf format (`map` / `command`, chords, leaders, `{AGT_X}` tokens).
 - **examples.md** — copy-paste agtermctl recipes for common tasks (build a layout, run a program in a
   blocking overlay and read its status, type into a fresh session, notify, inspect the tree).

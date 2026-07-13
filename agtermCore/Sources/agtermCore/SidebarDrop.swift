@@ -8,6 +8,16 @@ import Foundation
 public enum SidebarDrop {
     /// Mirrors AppKit's `NSOutlineViewDropOnItemIndex`: a drop landing ON a row rather than between rows.
     public static let onItemIndex = -1
+    /// Prevents an accidental Finder multi-selection from spawning an unbounded number of shells.
+    public static let maximumDirectoryImportCount = 20
+
+    /// Resolves the workspace for a Finder directory drop. Folder import is a tree-only affordance;
+    /// empty-space drops prefer the focused workspace so adding a session cannot silently leave focus mode.
+    public static func resolveDirectoryWorkspace(sidebarMode: SidebarMode, rowWorkspaceID: UUID?,
+                                                 focusedWorkspaceID: UUID?, currentWorkspaceID: UUID?) -> UUID? {
+        guard sidebarMode == .tree else { return nil }
+        return rowWorkspaceID ?? focusedWorkspaceID ?? currentWorkspaceID
+    }
 
     /// The destination of a dragged session, or nil when the drop is a no-op (would leave order
     /// unchanged). `destination` is the POST-removal index `AppStore.moveSession` expects; `dropChildIndex`
@@ -16,6 +26,17 @@ public enum SidebarDrop {
         public let workspace: UUID
         public let dropChildIndex: Int
         public let destination: Int
+    }
+
+    /// A dragged session's original location before a batch move removes anything.
+    public struct SessionSource: Equatable, Sendable {
+        public let workspace: UUID
+        public let index: Int
+
+        public init(workspace: UUID, index: Int) {
+            self.workspace = workspace
+            self.index = index
+        }
     }
 
     /// Describes the row a session was dropped onto. A workspace row uses the child index directly; a
@@ -60,6 +81,42 @@ public enum SidebarDrop {
             let landed = max(0, min(destination, targetCount - 1))
             if landed == sourceIndex { return nil }
         }
+        return SessionResolution(workspace: workspace, dropChildIndex: dropChildIndex, destination: destination)
+    }
+
+    /// Resolves a batch session drop into one remove-all/insert-block move. `sources` must be in the
+    /// dragged block's intended order. The returned destination is the target index AFTER all dragged
+    /// sessions have been removed from their original workspaces.
+    public static func resolveSessions(sources: [SessionSource],
+                                       target: SessionDropTarget,
+                                       childIndex: Int) -> SessionResolution? {
+        guard !sources.isEmpty else { return nil }
+        let workspace: UUID
+        let targetCount: Int
+        let dropChildIndex: Int
+        switch target {
+        case let .workspaceRow(id, sessionCount):
+            workspace = id
+            targetCount = sessionCount
+            dropChildIndex = childIndex
+        case let .sessionRow(owner, sessionIndex, sessionCount):
+            workspace = owner
+            targetCount = sessionCount
+            dropChildIndex = childIndex == onItemIndex ? sessionIndex + 1 : childIndex
+        }
+
+        let rawDestination = dropChildIndex == onItemIndex ? targetCount : dropChildIndex
+        let sourceIndicesInTarget = sources.filter { $0.workspace == workspace }.map(\.index).sorted()
+        let removedBeforeDestination = sourceIndicesInTarget.count { $0 < rawDestination }
+        let destination = rawDestination - removedBeforeDestination
+
+        if let firstSourceIndex = sourceIndicesInTarget.first,
+           sourceIndicesInTarget.count == sources.count,
+           sourceIndicesInTarget == Array(firstSourceIndex..<firstSourceIndex + sourceIndicesInTarget.count),
+           destination == firstSourceIndex {
+            return nil
+        }
+
         return SessionResolution(workspace: workspace, dropChildIndex: dropChildIndex, destination: destination)
     }
 

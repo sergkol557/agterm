@@ -23,6 +23,10 @@ struct agtermApp: App {
     /// The plain `WindowGroup`'s scene id, used by `openWindow(id:)` to spawn additional windows.
     private static let windowGroupID = "terminal"
 
+    /// The version paired with agterm's `TERM_PROGRAM` identity in every spawned terminal.
+    private static let terminalProgramVersion =
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
+
     init() {
         let library = agtermApp.restoredLibrary()
         _library = State(initialValue: library)
@@ -37,7 +41,7 @@ struct agtermApp: App {
         _settingsModel = State(initialValue: settingsModel)
         let controlServer = ControlServer(library: library, actions: actions, settingsModel: settingsModel)
         _controlServer = State(initialValue: controlServer)
-        _sessionSwitcher = State(initialValue: SessionSwitcher(library: library))
+        _sessionSwitcher = State(initialValue: SessionSwitcher(library: library, canSwitch: { actions.uiActionsEnabled }))
         _paneShortcuts = State(initialValue: PaneShortcuts(library: library, actions: actions))
         _undoCloseShortcut = State(initialValue: UndoCloseShortcut(actions: actions))
         // the custom-command runner needs the keymap (settings) and the bound socket path (control
@@ -212,14 +216,9 @@ struct agtermApp: App {
                                       initialInput: plan.initialInput, env: env)
         view.session = session
         let sessionID = session.id
-        view.onExit = {
-            store.closePrimaryPane(sessionID)
-            // focus the surviving (now maximized) pane; if the whole (single) session closed instead,
-            // focus the session it reselected to. the collapse/switch re-hosts the target, so use the retry.
-            // resolve through `topmostSurface`, so a pane exiting under an overlay or scratch hands focus to
-            // the cover on top rather than to the pane it hides.
-            let target = store.session(withID: sessionID)?.topmostSurface ?? store.activeSession?.topmostSurface
-            (target as? GhosttySurfaceView)?.focusAfterReparent()
+        view.onExit = { [weak view] in
+            guard let view else { return }
+            Self.handlePaneExit(view, store: store, sessionID: sessionID)
         }
         view.onFocusChange = { focused in
             guard focused else { return }
@@ -228,11 +227,44 @@ struct agtermApp: App {
             store.clearUnseen(sessionID)
             NotificationManager.shared.clearDelivered(sessionID: sessionID)
         }
-        Self.wireStatusClear(view, store: store, sessionID: sessionID, pane: .left)
+        // the focus-free half of the clear above, for the zoom-hosted case where the focus report is
+        // suppressed but the refocused user is looking at exactly this surface.
+        view.onClearUnseen = {
+            store.clearUnseen(sessionID)
+            NotificationManager.shared.clearDelivered(sessionID: sessionID)
+        }
+        Self.wireStatusClear(view, store: store, sessionID: sessionID)
         view.onUserInput = { store.noteUserActivity() }
         view.onFontSizeChange = { store.setFontSize(sessionID, $0) }
         Self.wireSearchCallbacks(view, store: store, sessionID: sessionID, library: library)
         return view
+    }
+
+    /// Shell-exit handler shared by BOTH pane factories, dispatched on the surface's CURRENT role rather
+    /// than the factory that built it: a promoted split survivor (built by `makeSplitSurface`, then moved
+    /// into the main slot with `isSplitPane` cleared) must run `closePrimaryPane` on its own exit — else
+    /// a re-split followed by exiting the main pane fires the stale `closeSplitPane`, whose guard now
+    /// passes (both slots live) and tears down the fresh right pane, stranding the session on the dead
+    /// left one. Mirrors the role-aware `onFocusChange` so fresh and promoted panes route the same way.
+    @MainActor
+    private static func handlePaneExit(_ view: GhosttySurfaceView, store: AppStore, sessionID: UUID) {
+        if view.isSplitPane {
+            store.closeSplitPane(sessionID)
+        } else {
+            store.closePrimaryPane(sessionID)
+            // a promoted survivor was built by makeSplitSurface (which omits onFontSizeChange); as the
+            // session's now-sole pane it should persist its own cmd +/- like a real primary, so adopt that
+            // wiring. no-op when the session closed instead (single pane) — `surface` is then nil.
+            if let promoted = store.session(withID: sessionID)?.surface as? GhosttySurfaceView {
+                promoted.onFontSizeChange = { store.setFontSize(sessionID, $0) }
+            }
+        }
+        // focus the surviving (now maximized) pane; if the whole session closed instead, focus the session
+        // it reselected to. the collapse/switch re-hosts the target, so use the retry.
+        // resolve through `topmostSurface`, so a pane exiting under an overlay or scratch hands focus to
+        // the cover on top rather than to the pane it hides.
+        let target = store.session(withID: sessionID)?.topmostSurface ?? store.activeSession?.topmostSurface
+        (target as? GhosttySurfaceView)?.focusAfterReparent()
     }
 
     /// The `initial_input` for a restored pane: the captured foreground argv re-rendered as a shell
@@ -288,9 +320,14 @@ struct agtermApp: App {
             // (it restores the session on its own hide). target the visible `topmostSurface` (overlay >
             // scratch > active pane) and re-assert past the SwiftUI teardown via the bounded retry.
             guard store.selectedSessionID == sessionID else { return }
-            let quickTerminalVisible = library.windowID(forSession: sessionID)
+            let windowID = library.windowID(forSession: sessionID)
+            let quickTerminalVisible = windowID
                 .flatMap { QuickTerminalRegistry.shared.controller(for: $0) }?.isVisible ?? false
             guard !quickTerminalVisible else { return }
+            // terminal zoom owns focus above the whole deck, and zoom-enter itself ends an open search —
+            // this END lands a tick later, so refocusing the deck's topmost surface here would steal
+            // first responder back from the zoomed terminal (the zoom cover bails like the quick one).
+            guard windowID.flatMap({ TerminalZoomRegistry.shared.controller(for: $0) })?.target == nil else { return }
             (session.topmostSurface as? GhosttySurfaceView)?.focusAfterReparent()
         }
         view.onSearchTotal = { total in store.session(withID: sessionID)?.searchTotal = total }
@@ -300,12 +337,17 @@ struct agtermApp: App {
     /// Wire the pane-scoped keystroke-clear: `keyDown` fires `onUserInputClearsStatus` unconditionally, and
     /// this closure clears the status back to idle ONLY when the host-free `AgentIndicator.clearedBy(pane:isInterrupt:)`
     /// says the keystroke's OWN pane owns the current status — so a block set from a background pane survives
-    /// foreground typing in another pane. Wired by all three surface factories with only the pane differing
-    /// (main=`.left`, split=`.right`, scratch=`.scratch`), like `wireSearchCallbacks`; the scratch has no
-    /// `view.session`, so the decision must live in this closure rather than `keyDown`.
+    /// foreground typing in another pane. The main/split panes resolve their pane from the surface's LIVE role
+    /// (`isSplitPane`) at keystroke time, NOT statically: a promoted split survivor (a split surface whose
+    /// `isSplitPane` was cleared) then clears as `.left`, matching its migrated status identity and `tree`
+    /// addressing — a statically-captured `.right` would keep clearing the wrong pane after promotion, and a
+    /// re-split would leave both panes `.right`-wired (mirrors the role-aware `onFocusChange`). The scratch pane
+    /// passes `fixedPane: .scratch` (never promoted, and it has no `view.session` to read a role from).
     @MainActor
-    private static func wireStatusClear(_ view: GhosttySurfaceView, store: AppStore, sessionID: UUID, pane: StatusPane) {
-        view.onUserInputClearsStatus = { isInterrupt in
+    private static func wireStatusClear(_ view: GhosttySurfaceView, store: AppStore, sessionID: UUID,
+                                        fixedPane: StatusPane? = nil) {
+        view.onUserInputClearsStatus = { [weak view] isInterrupt in
+            let pane = fixedPane ?? ((view?.isSplitPane ?? false) ? .right : .left)
             if store.session(withID: sessionID)?.agentIndicator.clearedBy(pane: pane, isInterrupt: isInterrupt) == true {
                 store.setAgentIndicator(AgentIndicator(), forSession: sessionID)
             }
@@ -332,22 +374,25 @@ struct agtermApp: App {
         view.session = session
         view.isSplitPane = true
         let sessionID = session.id
-        view.onExit = {
-            store.closeSplitPane(sessionID)
-            // focus the surviving (now maximized) pane; if the whole session closed (primary already
-            // exited), focus the session it reselected to. the collapse/switch re-hosts it, so retry.
-            // resolve through `topmostSurface`, so a pane exiting under an overlay or scratch hands focus to
-            // the cover on top rather than to the pane it hides.
-            let target = store.session(withID: sessionID)?.topmostSurface ?? store.activeSession?.topmostSurface
-            (target as? GhosttySurfaceView)?.focusAfterReparent()
+        view.onExit = { [weak view] in
+            guard let view else { return }
+            Self.handlePaneExit(view, store: store, sessionID: sessionID)
         }
-        view.onFocusChange = { focused in
+        view.onFocusChange = { [weak view] focused in
             guard focused else { return }
-            store.session(withID: sessionID)?.splitFocused = true
+            // a promoted survivor keeps this split-factory closure but has had `isSplitPane` cleared, so
+            // honor the view's CURRENT role: once it is the main pane it must NOT re-raise `splitFocused`
+            // (which would mask its migrated title and mis-route focus after a later re-split).
+            store.session(withID: sessionID)?.splitFocused = view?.isSplitPane ?? false
             store.clearUnseen(sessionID)
             NotificationManager.shared.clearDelivered(sessionID: sessionID)
         }
-        Self.wireStatusClear(view, store: store, sessionID: sessionID, pane: .right)
+        // the focus-free half of the clear above, for the zoom-hosted case (see makeSurface).
+        view.onClearUnseen = {
+            store.clearUnseen(sessionID)
+            NotificationManager.shared.clearDelivered(sessionID: sessionID)
+        }
+        Self.wireStatusClear(view, store: store, sessionID: sessionID)
         view.onUserInput = { store.noteUserActivity() }
         Self.wireSearchCallbacks(view, store: store, sessionID: sessionID, library: library)
         return view
@@ -413,7 +458,7 @@ struct agtermApp: App {
                                       autoFocus: !suppressAutoFocus, env: env)
         let sessionID = session.id
         view.onExit = { store.closeScratch(sessionID) }
-        Self.wireStatusClear(view, store: store, sessionID: sessionID, pane: .scratch)
+        Self.wireStatusClear(view, store: store, sessionID: sessionID, fixedPane: .scratch)
         // typing in the scratch counts as user activity: reset the window's auto-follow idle timer so an
         // idle fire can't change the underlying selection (hiding the per-session scratch) while you type
         // in it. destroySurface nils this, breaking the store -> surface -> closure retain cycle.
@@ -425,8 +470,9 @@ struct agtermApp: App {
         return view
     }
 
-    /// The `AGTERM_*` environment a tree surface (main / split / overlay / scratch) exposes to its spawned
-    /// shell. The window id comes from the open store that owns the session (split/overlay/scratch inherit it
+    /// The environment a tree surface (main / split / overlay / scratch) exposes to its spawned shell: the
+    /// `AGTERM_*` session facts plus agterm's app identity (`TERM_PROGRAM`/`TERM_PROGRAM_VERSION`). The window
+    /// id comes from the open store that owns the session (split/overlay/scratch inherit it
     /// via the same session); the workspace from the session's owning workspace; `AGTERM_SOCKET` is the path
     /// `ControlServer` will bind (resolved at init, so a launch-window shell that materializes before
     /// `start()` binds still sees it), honoring a test's `AGTERM_CONTROL_SOCKET` override. `pane` injects the
@@ -444,13 +490,15 @@ struct agtermApp: App {
         }
         return SurfaceEnvironment.session(sessionID: session.id, windowID: windowID,
                                           workspaceID: workspaceID, socketPath: controlServer.resolvedSocketPath,
+                                          programVersion: Self.terminalProgramVersion,
                                           pane: pane)
     }
 
-    /// The `AGTERM_*` environment a window's quick terminal exposes — scratch, not in the tree, so it
-    /// carries only `AGTERM_ENABLED`, `AGTERM_WINDOW_ID`, and `AGTERM_SOCKET` (no workspace/session ids).
+    /// The environment a window's quick terminal exposes — scratch, not in the tree, so its `AGTERM_*`
+    /// values carry only enabled, window, and socket facts (no workspace/session ids), plus app identity.
     @MainActor
     func quickTerminalEnv(for windowID: WindowInfo.ID) -> [String: String] {
-        SurfaceEnvironment.quickTerminal(windowID: windowID, socketPath: controlServer.resolvedSocketPath)
+        SurfaceEnvironment.quickTerminal(windowID: windowID, socketPath: controlServer.resolvedSocketPath,
+                                         programVersion: Self.terminalProgramVersion)
     }
 }

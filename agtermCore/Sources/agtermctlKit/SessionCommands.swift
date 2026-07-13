@@ -2,11 +2,11 @@ import ArgumentParser
 import Foundation
 import agtermCore
 
-/// Shared `--pane` validation for the session commands that accept `left|right|scratch` (type, text, status).
-/// Rejects any other value with a clean usage error before the socket round-trip, matching the server-side
-/// switch (so the CLI and server can't drift, and a raw socket client still hits the same check server-side).
-/// These three commands intentionally reuse `StatusPane`'s `left|right|scratch` value set as the shared
-/// pane-addressing vocabulary — the enum is named for agent status but its cases are the pane names.
+/// Shared `--pane` validation for the commands that accept `left|right|scratch` (session type, text, status,
+/// and font). Rejects any other value with a clean usage error before the socket round-trip, matching the
+/// server-side switch (so the CLI and server can't drift, and a raw socket client still hits the same check
+/// server-side). These commands intentionally reuse `StatusPane`'s `left|right|scratch` value set as the
+/// shared pane-addressing vocabulary — the enum is named for agent status but its cases are the pane names.
 func validatePaneArgument(_ pane: String?) throws {
     if let pane, StatusPane(rawValue: pane) == nil {
         throw ValidationError("--pane must be left, right, or scratch")
@@ -18,7 +18,7 @@ func validatePaneArgument(_ pane: String?) throws {
 struct Session: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Session commands.",
-        subcommands: [New.self, Close.self, Select.self, Go.self, Rename.self, Move.self, TypeText.self,
+        subcommands: [New.self, Close.self, Select.self, Go.self, Rename.self, Reveal.self, Move.self, TypeText.self,
                       Split.self, Scratch.self, Focus.self, Resize.self, Copy.self, Paste.self, SelectAll.self,
                       Text.self, Status.self, FlagCommand.self,
                       Seen.self, Search.self, Background.self, Overlay.self]
@@ -63,11 +63,13 @@ struct Session: ParsableCommand {
 
     struct Close: RequestCommand {
         static let configuration = CommandConfiguration(abstract: "Close a session.")
-        @OptionGroup var target: TargetOptions
+        @OptionGroup var target: BatchTargetOptions
         @OptionGroup var options: ClientOptions
 
         func makeRequest() throws -> ControlRequest {
-            ControlRequest(cmd: .sessionClose, target: target.target, args: options.withWindow())
+            let batchArgs = target.batchTargets.map { ControlArgs(targets: $0) }
+            let args = options.withWindow(batchArgs)
+            return ControlRequest(cmd: .sessionClose, target: target.targets.first ?? "active", args: args)
         }
     }
 
@@ -103,6 +105,16 @@ struct Session: ParsableCommand {
         }
     }
 
+    struct Reveal: RequestCommand {
+        static let configuration = CommandConfiguration(abstract: "Reveal a session's focused working directory in Finder.")
+        @OptionGroup var target: TargetOptions
+        @OptionGroup var options: ClientOptions
+
+        func makeRequest() throws -> ControlRequest {
+            ControlRequest(cmd: .sessionReveal, target: target.target, args: options.withWindow())
+        }
+    }
+
     struct Move: RequestCommand {
         static let configuration = CommandConfiguration(
             abstract: "Move a session: to another workspace, reorder with --to, or place relative to an anchor with --after/--before.")
@@ -110,7 +122,7 @@ struct Session: ParsableCommand {
         @Option(name: .long, help: "Reorder within the workspace: up, down, top, or bottom.") var to: String?
         @Option(name: .long, help: "Place right AFTER this anchor session (id/prefix/active); the anchor carries its own workspace (relocates + positions in one shot).") var after: String?
         @Option(name: .long, help: "Place right BEFORE this anchor session (id/prefix/active); mirror of --after.") var before: String?
-        @OptionGroup var target: TargetOptions
+        @OptionGroup var target: BatchTargetOptions
         @OptionGroup var options: ClientOptions
 
         // exactly one placement intent among {workspace positional (relocate), --to (reorder),
@@ -130,6 +142,9 @@ struct Session: ParsableCommand {
                 }
                 return
             }
+            if target.targets.count > 1, to != nil {
+                throw ValidationError("session.move --target can be repeated only with a workspace or --after/--before")
+            }
             switch (workspace, to) {
             case (nil, nil): throw ValidationError("provide a destination workspace, --to, or --after/--before")
             case (.some, .some): throw ValidationError("provide a destination workspace or --to, not both")
@@ -148,7 +163,10 @@ struct Session: ParsableCommand {
             } else {
                 args = ControlArgs(to: to)
             }
-            return ControlRequest(cmd: .sessionMove, target: target.target, args: options.withWindow(args))
+            var withTargets = args
+            withTargets.targets = target.batchTargets
+            return ControlRequest(cmd: .sessionMove, target: target.targets.first ?? "active",
+                                  args: options.withWindow(withTargets))
         }
     }
 
