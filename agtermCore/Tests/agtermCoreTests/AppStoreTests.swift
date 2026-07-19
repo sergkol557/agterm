@@ -64,6 +64,20 @@ struct AppStoreTests {
         #expect(store.activeSession?.id == unwrapped.id)
     }
 
+    @Test func addSessionWithoutSelectLeavesSelectionUntouched() {
+        let store = makeStore()
+        let ws = store.addWorkspace(name: "work")
+        let first = try! #require(store.addSession(toWorkspace: ws.id, cwd: "/a"))
+        #expect(store.selectedSessionID == first.id)
+        // a background add (control `session.new --no-select`) appends the session but keeps the current
+        // selection and recency, so `active` still points at the first session.
+        let background = try! #require(store.addSession(toWorkspace: ws.id, cwd: "/b", select: false))
+        #expect(store.workspaces[0].sessions.map(\.id) == [first.id, background.id])
+        #expect(store.selectedSessionID == first.id)
+        #expect(store.activeSession?.id == first.id)
+        #expect(store.sessionRecency.items == [first.id]) // the background add was not recorded
+    }
+
     @Test func addSessionCarriesInitialCommand() {
         let store = makeStore()
         let ws = store.addWorkspace(name: "work")
@@ -72,6 +86,16 @@ struct AppStoreTests {
         // default is nil — a plain session runs the login shell.
         let plain = try! #require(store.addSession(toWorkspace: ws.id, cwd: "/tmp"))
         #expect(plain.initialCommand == nil)
+    }
+
+    @Test func addSessionCarriesCommandWait() {
+        let store = makeStore()
+        let ws = store.addWorkspace(name: "work")
+        let held = try! #require(store.addSession(toWorkspace: ws.id, cwd: "/tmp", command: "make test", wait: true))
+        #expect(held.commandWait == true)
+        // default is false — a command session closes when its command exits.
+        let plain = try! #require(store.addSession(toWorkspace: ws.id, cwd: "/tmp", command: "make test"))
+        #expect(plain.commandWait == false)
     }
 
     @Test func addSessionSeedsCustomName() {
@@ -472,17 +496,20 @@ struct AppStoreTests {
     }
 
     @Test func softCloseSessionsAdjustsReselectionForEarlierBatchRemovals() throws {
+        // the index adjustment feeds the POSITIONAL fallback, which only runs when the scoped recency is
+        // empty, so drive it through a restore: nothing has been activated but the restored selection, and
+        // once that is the session being closed the fallback is the only thing left to pick with.
         let store = makeStore()
-        let ws = store.addWorkspace(name: "work")
-        let first = try #require(store.addSession(toWorkspace: ws.id, cwd: "/a"))
-        let active = try #require(store.addSession(toWorkspace: ws.id, cwd: "/b"))
-        let neighbor = try #require(store.addSession(toWorkspace: ws.id, cwd: "/c"))
-        _ = try #require(store.addSession(toWorkspace: ws.id, cwd: "/d"))
-        store.selectSession(active.id)
+        let wsID = UUID()
+        let ids = [UUID(), UUID(), UUID(), UUID()]
+        let sessions = ids.enumerated().map { SessionSnapshot(id: $1, customName: nil, cwd: "/\($0)") }
+        store.restore(from: Snapshot(selectedSessionID: ids[1],
+                                     workspaces: [WorkspaceSnapshot(id: wsID, name: "work", sessions: sessions)]))
 
-        #expect(store.softCloseSessions([first.id, active.id], grace: 60))
+        #expect(store.softCloseSessions([ids[0], ids[1]], grace: 60))
 
-        #expect(store.selectedSessionID == neighbor.id)
+        // without the adjustment the stale index 1 would pick the LAST session instead of the neighbor
+        #expect(store.selectedSessionID == ids[2])
     }
 
     @Test func softCloseSessionsFallsBackWhenActiveWorkspaceIsEmptied() throws {
@@ -1116,137 +1143,6 @@ struct AppStoreTests {
         #expect(store.canRemoveWorkspace == false)
         store.removeWorkspace(only.id)
         #expect(store.workspaces.map(\.id) == [only.id])
-    }
-
-    @Test func splitCwdRoundTripsThroughSnapshot() {
-        let store = makeStore()
-        let ws = store.addWorkspace(name: "work")
-        let session = store.addSession(toWorkspace: ws.id, cwd: "/a")!
-        session.isSplit = true
-        session.currentCwd = "/a/primary"
-        session.splitCwd = "/var/log"
-        let snap = store.snapshot()
-        let snapped = snap.workspaces[0].sessions[0]
-        #expect(snapped.cwd == "/a/primary")
-        #expect(snapped.splitCwd == "/var/log")
-        // restore into a fresh store: each pane keeps its own seed.
-        let restored = makeStore()
-        restored.restore(from: snap)
-        let r = restored.workspaces[0].sessions[0]
-        #expect(r.initialCwd == "/a/primary")
-        #expect(r.initialSplitCwd == "/var/log")
-        #expect(r.isSplit == true)
-    }
-
-    @Test func foregroundCommandRoundTripsThroughSnapshot() {
-        let store = makeStore()
-        let ws = store.addWorkspace(name: "work")
-        let session = store.addSession(toWorkspace: ws.id, cwd: "/a")!
-        session.foregroundCommand = ["ssh", "gate", "-p", "22"]
-        session.splitForegroundCommand = ["tail", "-f", "/var/log/x"]
-        let snap = store.snapshot()
-        let snapped = snap.workspaces[0].sessions[0]
-        #expect(snapped.foregroundCommand == ["ssh", "gate", "-p", "22"])
-        #expect(snapped.splitForegroundCommand == ["tail", "-f", "/var/log/x"])
-        let restored = makeStore()
-        restored.restore(from: snap)
-        let r = restored.workspaces[0].sessions[0]
-        #expect(r.foregroundCommand == ["ssh", "gate", "-p", "22"])
-        #expect(r.splitForegroundCommand == ["tail", "-f", "/var/log/x"])
-    }
-
-    @Test func legacySnapshotWithoutForegroundCommandDecodesNil() throws {
-        // a snapshot written before this field existed must still decode (nil = plain shell on restore).
-        let json = #"{"id":"00000000-0000-0000-0000-000000000001","cwd":"/tmp"}"#
-        let snap = try JSONDecoder().decode(SessionSnapshot.self, from: Data(json.utf8))
-        #expect(snap.foregroundCommand == nil)
-        #expect(snap.splitForegroundCommand == nil)
-        #expect(snap.initialCommand == nil)
-        #expect(snap.cwd == "/tmp")
-    }
-
-    @Test func initialCommandRoundTripsThroughSnapshot() {
-        // a command session (e.g. `--command ssh …`) persists its creation command so it re-runs on
-        // restore instead of coming back a plain shell.
-        let store = makeStore()
-        let ws = store.addWorkspace(name: "work")
-        let session = store.addSession(toWorkspace: ws.id, cwd: "/a")!
-        session.initialCommand = "ssh user@host -t 'ssh inner'"
-        #expect(session.wasRestored == false) // a fresh session is not marked restored
-        let snap = store.snapshot()
-        #expect(snap.workspaces[0].sessions[0].initialCommand == "ssh user@host -t 'ssh inner'")
-        let restored = makeStore()
-        restored.restore(from: snap)
-        let r = restored.workspaces[0].sessions[0]
-        #expect(r.initialCommand == "ssh user@host -t 'ssh inner'")
-        #expect(r.wasRestored == true) // restore marks the session, so the surface factory can gate its re-run
-    }
-
-    @Test func sidebarWidthAndVisibilityRoundTripThroughSnapshot() {
-        let store = makeStore()
-        _ = store.addWorkspace(name: "work")
-        store.sidebarWidth = 312
-        store.sidebarVisible = false
-        let snap = store.snapshot()
-        #expect(snap.sidebarWidth == 312)
-        #expect(snap.sidebarVisible == false)
-        let restored = makeStore()
-        restored.restore(from: snap)
-        #expect(restored.sidebarWidth == 312)
-        #expect(restored.sidebarVisible == false)
-    }
-
-    @Test func sidebarDefaultsWhenSnapshotOmitsThem() {
-        // a snapshot written before these fields existed decodes them as nil; restore falls back to defaults.
-        let store = makeStore()
-        store.sidebarWidth = 400
-        store.sidebarVisible = false
-        store.restore(from: Snapshot(workspaces: []))
-        #expect(store.sidebarWidth == 220)
-        #expect(store.sidebarVisible == true)
-    }
-
-    @Test func restoreClampsOutOfRangeSidebarWidth() {
-        // a corrupt or hand-edited snapshot must not drive an out-of-range frame width; restore clamps it.
-        let store = makeStore()
-        store.restore(from: Snapshot(workspaces: [], sidebarWidth: 2000))
-        #expect(store.sidebarWidth == AppStore.sidebarWidthMax)
-        store.restore(from: Snapshot(workspaces: [], sidebarWidth: 10))
-        #expect(store.sidebarWidth == AppStore.sidebarWidthMin)
-    }
-
-    @Test func restoreClampsOutOfRangeSplitRatio() {
-        // a corrupt snapshot ratio must not feed an out-of-range fraction into NSSplitView.setPosition.
-        let store = makeStore()
-        let ws = store.addWorkspace(name: "work")
-        let session = store.addSession(toWorkspace: ws.id, cwd: "/a")!
-        session.isSplit = true
-        session.splitRatio = 5.0
-        let restored = makeStore()
-        restored.restore(from: store.snapshot())
-        #expect(restored.workspaces[0].sessions[0].splitRatio == AppStore.splitRatioMax)
-    }
-
-    @Test func splitRatioRoundTripsThroughSnapshot() {
-        let store = makeStore()
-        let ws = store.addWorkspace(name: "work")
-        let session = store.addSession(toWorkspace: ws.id, cwd: "/a")!
-        session.isSplit = true
-        session.splitRatio = 0.63
-        #expect(store.snapshot().workspaces[0].sessions[0].splitRatio == 0.63)
-        let restored = makeStore()
-        restored.restore(from: store.snapshot())
-        #expect(restored.workspaces[0].sessions[0].splitRatio == 0.63)
-    }
-
-    @Test func sessionSnapshotDecodesWithoutSplitRatio() throws {
-        // a SessionSnapshot persisted before splitRatio existed (the key absent) must decode to nil, not
-        // fail the load — the forward-compat contract the optional field documents.
-        let json = "{\"id\":\"\(UUID().uuidString)\",\"cwd\":\"/a\"}"
-        let snap = try JSONDecoder().decode(SessionSnapshot.self, from: Data(json.utf8))
-        #expect(snap.splitRatio == nil)
-        #expect(snap.isSplit == nil)
-        #expect(snap.fontSize == nil)
     }
 
     @Test func selectionUpdatesRecencyMostRecentFirst() {

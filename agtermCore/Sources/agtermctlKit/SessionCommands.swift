@@ -18,7 +18,7 @@ func validatePaneArgument(_ pane: String?) throws {
 struct Session: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Session commands.",
-        subcommands: [New.self, Close.self, Select.self, Go.self, Rename.self, Reveal.self, Move.self, TypeText.self,
+        subcommands: [New.self, Duplicate.self, Close.self, Select.self, Go.self, Rename.self, Reveal.self, Move.self, TypeText.self,
                       Split.self, Scratch.self, Focus.self, Resize.self, Copy.self, Paste.self, SelectAll.self,
                       Text.self, Status.self, FlagCommand.self,
                       Seen.self, Search.self, Background.self, Overlay.self]
@@ -31,9 +31,11 @@ struct Session: ParsableCommand {
         @Option(name: .long, help: "Target workspace by name; errors if not found unless --create-workspace. Mutually exclusive with --workspace.") var workspaceName: String?
         @Flag(name: .long, help: "With --workspace-name, create the workspace when it does not exist (reuse it otherwise).") var createWorkspace = false
         @Option(name: .long, help: "Run this command as the session's process instead of the login shell (no echoed command line; the session closes when it exits).") var command: String?
+        @Flag(name: .long, help: "With --command, hold the session open after the command exits (press any key to close) instead of closing immediately.") var wait = false
         @Option(name: .long, help: "Initial session name (defaults to the auto basename).") var name: String?
         @Option(name: .long, help: "Place the new session right AFTER this anchor session (id/prefix/active); the anchor carries its own workspace, replacing --workspace.") var after: String?
         @Option(name: .long, help: "Place the new session right BEFORE this anchor session (id/prefix/active); mirror of --after.") var before: String?
+        @Flag(name: .long, help: "Create the session in the background without selecting or focusing it (leaves the current selection untouched).") var noSelect = false
         @OptionGroup var options: ClientOptions
         var echoesResultID: Bool { true }
 
@@ -51,13 +53,30 @@ struct Session: ParsableCommand {
             if createWorkspace, workspaceName == nil {
                 throw ValidationError("--create-workspace requires --workspace-name")
             }
+            if wait, command == nil {
+                throw ValidationError("--wait requires --command")
+            }
         }
 
         func makeRequest() throws -> ControlRequest {
             ControlRequest(cmd: .sessionNew, args: options.withWindow(
                 ControlArgs(name: name, cwd: cwd, workspace: workspace, workspaceName: workspaceName,
-                            createWorkspace: createWorkspace ? true : nil, command: command,
-                            after: after, before: before)))
+                            createWorkspace: createWorkspace ? true : nil, noSelect: noSelect ? true : nil,
+                            command: command, wait: wait ? true : nil, after: after, before: before)))
+        }
+    }
+
+    /// No options: the target session names both the destination workspace and the cwd, so a duplicate is
+    /// fully described by `--target` (the GUI half is the sidebar row's "Duplicate").
+    struct Duplicate: RequestCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Duplicate a session: a fresh shell in its directory, placed right after it.")
+        @OptionGroup var target: TargetOptions
+        @OptionGroup var options: ClientOptions
+        var echoesResultID: Bool { true }
+
+        func makeRequest() throws -> ControlRequest {
+            ControlRequest(cmd: .sessionDuplicate, target: target.target, args: options.withWindow())
         }
     }
 

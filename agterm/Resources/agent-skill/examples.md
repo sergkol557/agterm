@@ -44,6 +44,7 @@ Run a command AS the session's process (closes when it exits, no echoed command 
 ```bash
 agtermctl session new --command "ssh host -p 22"     # a default-PATH binary: argv-split (quotes respected), no shell, no echo
 agtermctl session new --command "zsh -lc 'htop'"     # Homebrew/non-default binary: --command has the app's GUI PATH, so wrap in a login shell (or use an absolute path); bare "htop" exits 127
+agtermctl session new --command "zsh -lc 'make test'" --wait   # HOLD the row open after the command exits (press any key to close) so its final output stays readable; --wait needs --command
 ```
 
 Create a session pre-named (label set at creation, no follow-up rename):
@@ -58,6 +59,34 @@ duplicate "servers" workspace on repeated calls):
 ```bash
 agtermctl session new --workspace-name servers --create-workspace --name "myhost" --command "ssh user@host"
 ```
+
+Create a session in the background — do NOT switch to it. The current selection and keyboard focus stay
+put; the new session appears in the sidebar but is not `active` in `tree` (the read-back). It is the
+inverse of the overlay's `--follow`:
+
+```bash
+agtermctl session new --cwd "$HOME/project" --no-select
+```
+
+## Duplicate a session (a second shell in the same directory)
+
+`session duplicate` creates a fresh session — a plain login shell — in the SAME workspace as the target,
+directly AFTER it, rooted at the target's focused-pane cwd, then selects + focuses it and prints the new
+id. ONLY the directory carries over: no custom name, `--command`, split, scratch, status, flag, font size,
+or background. It is `session new --cwd <source cwd> --after <source>` in one atomic round-trip, and the
+control half of the sidebar row's **Duplicate Session** context-menu item.
+
+```bash
+agtermctl session duplicate                                    # a second shell beside the current session, same cwd
+sid=$(agtermctl session duplicate --target 3f2a --json | jq -r '.result.id')
+agtermctl session type $'npm run dev\n' --target "$sid"        # run something in the copy, source left alone
+```
+
+Read it back off `tree` — there is no new tree field: the duplicate's node appears directly after its
+source, carrying the source's focused-pane cwd. That equals the source node's `tree.cwd` for a non-split
+session (and a split focused on its primary pane); for a split focused off its primary the source node's
+`tree.cwd` reports the primary while the duplicate carries the focused pane's directory, so compare against
+the pane you duplicated from.
 
 ## Build a small layout
 

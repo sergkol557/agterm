@@ -50,6 +50,14 @@ public final class Session: Identifiable {
     /// sort key) and ephemeral: `SessionSnapshot` doesn't capture it, so it never survives a relaunch.
     @ObservationIgnored public var statusChangedAt: Date?
 
+    /// Whether idle auto-follow has already pulled the user to THIS blocked episode. Set by
+    /// `AppStore.autoFollowFire` when it jumps here, so a later idle fire won't yank the user back to a
+    /// block they've already been shown and left. Reset to false by `AppStore.setAgentIndicator` when the
+    /// session transitions INTO blocked from a non-blocked status (a new episode is eligible for one more
+    /// pull) — keyed off the transition, not `statusChangedAt`, so a hook re-asserting `blocked` over
+    /// `blocked` stays muted. `@ObservationIgnored` (no view reacts) and ephemeral (absent from `SessionSnapshot`).
+    @ObservationIgnored public var autoFollowConsumed = false
+
     /// Whether this session is in the flagged working-set — a durable, user-set flag that surfaces the
     /// session in the sidebar's flat flagged view (across workspaces) and swaps its tree row to the
     /// filled icon variant. Observed, so the sidebar reacts to a toggle. Persisted via `SessionSnapshot.flagged`,
@@ -114,6 +122,15 @@ public final class Session: Identifiable {
     /// capture — re-runs its command on restore instead of coming back a plain shell. The restore re-run
     /// is gated by `restoreRunningCommand` (via `wasRestored`); a fresh session always runs it.
     @ObservationIgnored public var initialCommand: String?
+
+    /// Whether a `--command` session HOLDS its surface after the command exits (showing libghostty's
+    /// "press any key to close" prompt with the final output intact) instead of closing immediately, set
+    /// at creation via `session.new --command … --wait`. The same libghostty `wait_after_command` the
+    /// overlay's `overlayWait` uses, applied to the PRIMARY surface (`makeSurface` reads it). Meaningful
+    /// only with `initialCommand`; a plain shell has nothing to hold. `@ObservationIgnored`. Persisted via
+    /// `SessionSnapshot.commandWait` so a restored command session that re-runs its command holds again,
+    /// keeping the held/closed behavior consistent across restart.
+    @ObservationIgnored public var commandWait: Bool = false
 
     /// True when this session was rebuilt by `AppStore.restore(from:)` rather than freshly created. The
     /// surface factory reads it to gate the `initialCommand` re-run: a FRESH command session always runs

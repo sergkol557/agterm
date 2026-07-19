@@ -15,7 +15,7 @@ description: >
 when_to_use: >
   Trigger on: agterm, agtermctl, agterm control socket, session.new, session.close, session.type,
   session.split, session.scratch, session.focus, session.resize, surface.zoom, dashboard, session.go, session.copy, session.paste, session.selectall, session.text, session.search, session.status,
-  session.flag, session.seen, session.reveal, session.background, session.overlay, workspace.new, workspace.select, workspace.move, workspace.focus, window.new, window.list,
+  session.flag, session.seen, session.reveal, session.duplicate, session.background, session.overlay, workspace.new, workspace.select, workspace.move, workspace.focus, window.new, window.list,
   window.select, window.resize, window.move, window.zoom, window.fullscreen, quick terminal, sidebar, sidebar.mode, sidebar.expand, sidebar.collapse, flagged, notify, font.inc, keymap.reload, config.reload,
   theme.set, theme.list, select theme, edit keymap, show an image, display an image inline, show-image,
   AGTERM_SESSION_ID, AGTERM_SOCKET, and asks to drive or script agterm. Also: troubleshoot agterm,
@@ -72,7 +72,8 @@ is not on PATH, the user can install it, or you invoke it by absolute path.
   mutations print `ok`, batch close/move prints the affected session count, and `tree`/`list` print a
   human listing.
 - One request per invocation. Mutating commands return the affected/new id; batch session mutations return
-  the number actually changed. Create commands (`session new`, `workspace new`, `window new`) print the new id.
+  the number actually changed. Create commands (`session new`, `session duplicate`, `workspace new`, `window new`)
+  print the new id.
 
 ## The model
 
@@ -119,7 +120,7 @@ you work. For any session-scoped command meant to act on *this* session — `ove
 `type`, `text`, `background`, `status`, `copy`, … — pass `--target "$AGTERM_SESSION_ID"`. Omit it and
 you open overlays / type into whatever the user has selected, not your own session.
 
-## Command summary (60 commands)
+## Command summary (61 commands)
 
 Run `agtermctl <area> <cmd> --help` for exact flags. Full detail in **reference.md**; recipes in
 **examples.md**.
@@ -134,7 +135,9 @@ unset or idle), `statusBlink`/`statusColor` (the status glyph's `--blink` flag a
 override from `session status`, omitted when idle / not blinking / default color), `background` (the background
 spec — image/text watermark or solid color — set via `session background`, omitted when none — the read side of set/clear),
 `unseen` (the unseen-notification badge count — raised by `notify`/OSC 9/777, cleared by `session
-seen` — omitted when zero), `overlaySizePercent` (an open overlay's floating-panel percent 1–100,
+seen` — omitted when zero), `commandWait` (whether a `--command` session was created with `--wait` to
+hold open after the command exits — the read side of `session new --wait`, omitted for a plain or
+non-holding session), `overlaySizePercent` (an open overlay's floating-panel percent 1–100,
 omitted for a full-pane overlay or no overlay so gate on `overlay` first; the read side of `overlay
 resize` for a record-then-restore zoom), `splitRatio` (the left-pane divider fraction 0.05–0.95 of a
 session that has a split — shown or hidden; omitted when there's no split or the ratio was never set (at
@@ -156,16 +159,28 @@ applied to the cells, omitted when untouched), and `dashboardFontMode` (`auto`|`
 focused from the tree workspace node's `focused` flag).
 
 **session**
-- `new [--cwd DIR] [--workspace W] [--workspace-name NAME] [--create-workspace] [--command CMD] [--name NAME] [--after SID | --before SID]` —
+- `new [--cwd DIR] [--workspace W] [--workspace-name NAME] [--create-workspace] [--command CMD] [--wait] [--name NAME] [--after SID | --before SID] [--no-select]` —
   create (and focus) a session. Target the workspace by id/prefix (`--workspace`) OR by name
   (`--workspace-name`, mutually exclusive); add `--create-workspace` to reuse-or-create the named
   workspace when absent. `--command` runs that program as the session process instead of a login shell
   (argv-only, and with the app's GUI `PATH` — a Homebrew/non-default binary needs an absolute path or a
   `zsh -lc '…'` wrapper, else exit 127; same caveat for `scratch --command` and `overlay open` below);
+  `--wait` (with `--command`, else an error) HOLDS the session open after the command exits, showing the
+  press-any-key prompt with the final output intact instead of closing (persists across restart, unlike an
+  overlay's live-only wait; read back on `tree`'s `commandWait`);
   `--name` seeds the sidebar label (default: the auto basename). `--after`/`--before` place it directly
   after/before an anchor session (id/prefix/`active`) instead of appending — the anchor carries its own
   workspace, so it's mutually exclusive with `--workspace`/`--workspace-name`. `new --after active` =
-  create right after the current session.
+  create right after the current session. `--no-select` creates the session in the BACKGROUND — it is
+  added to the sidebar but NOT selected or focused, leaving the current selection untouched (the new node
+  is not `active` in `tree`); omit it for the default select-and-focus behavior.
+- `duplicate [--target]` — create a fresh session (a plain login shell) in the target's workspace, right
+  after it, rooted at the target's focused-pane cwd; selects + focuses it and returns the new id. ONLY the
+  directory carries over — no custom name, command, split, scratch, status, flag, font size, or background.
+  Equivalent to `session new --cwd <source cwd> --after <source>` in one round-trip. Read it back from
+  `tree`: the new node sits directly after its source carrying the source's focused-pane cwd (equal to the
+  source node's `tree.cwd` unless the source is a split focused off its primary pane, where `tree.cwd`
+  reports the primary).
 - `close [--target T ...]` — close one session, or repeat `--target` to close a batch with one
   grace-period undo.
 - `select` · `rename <name>` · `reveal` (select the focused pane's cwd in Finder).

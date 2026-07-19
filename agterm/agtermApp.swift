@@ -113,6 +113,10 @@ struct agtermApp: App {
                     // remove the monitor on terminate.
                     appDelegate.customCommandRunner = customCommandRunner
                     appDelegate.settingsModel = settingsModel
+                    // hand the delegate the action hub and drain any folders an `open -a agterm /path`
+                    // queued before the window store resolved.
+                    appDelegate.actions = actions
+                    appDelegate.drainPendingOpenDirectories()
                     customCommandRunner.start()
                     // wire the keymap + runner into the action hub so the command palette can list the
                     // custom commands and run them (both are built after `actions`, so they're set here
@@ -212,8 +216,8 @@ struct agtermApp: App {
                                               hadForeground: hadForeground, foregroundInput: restoreInput,
                                               initialCommand: session.initialCommand)
         let view = GhosttySurfaceView(workingDirectory: session.initialCwd, fontSize: session.fontSize.map(Float.init),
-                                      command: plan.command,
-                                      initialInput: plan.initialInput, env: env)
+                                      command: plan.command, initialInput: plan.initialInput,
+                                      waitAfterCommand: session.commandWait, env: env)
         view.session = session
         let sessionID = session.id
         view.onExit = { [weak view] in

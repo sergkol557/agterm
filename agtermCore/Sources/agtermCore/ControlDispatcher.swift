@@ -7,6 +7,7 @@ import Foundation
 public protocol ControlActions {
     func controlTree(window: String?) -> ControlResponse
     func createSession(_ options: ControlSessionCreateOptions) -> ControlResponse
+    func duplicateSession(_ target: String?, window: String?) -> ControlResponse
     func selectSession(_ target: String?, window: String?) -> ControlResponse
     func goSession(window: String?, direction: SessionNavigation) -> ControlResponse
     func closeSession(_ target: String?, window: String?) -> ControlResponse
@@ -136,8 +137,8 @@ public struct ControlDispatcher {
         switch request.cmd {
         case .tree:
             return actions.controlTree(window: request.args?.window)
-        case .sessionNew, .sessionSelect, .sessionGo, .sessionClose, .sessionRename, .sessionReveal,
-                .sessionMove, .sessionFlag, .sessionSeen, .sessionStatus:
+        case .sessionNew, .sessionDuplicate, .sessionSelect, .sessionGo, .sessionClose, .sessionRename,
+                .sessionReveal, .sessionMove, .sessionFlag, .sessionSeen, .sessionStatus:
             return dispatchSessionCommand(request)
         case .sessionSplit, .sessionScratch, .sessionFocus, .sessionResize, .surfaceZoom, .sessionType,
                 .sessionCopy, .sessionPaste, .sessionSelectAll, .sessionSearch, .sessionOverlayOpen,
@@ -181,6 +182,10 @@ public struct ControlDispatcher {
             if args?.createWorkspace == true, args?.workspaceName == nil {
                 return ControlResponse(ok: false, error: "--create-workspace requires --workspace-name")
             }
+            // --wait holds the surface after the command exits, so it is meaningless without a command.
+            if args?.wait == true, args?.command == nil {
+                return ControlResponse(ok: false, error: "--wait requires --command")
+            }
             return actions.createSession(ControlSessionCreateOptions(
                 window: args?.window,
                 cwd: args?.cwd,
@@ -188,10 +193,16 @@ public struct ControlDispatcher {
                 workspaceName: args?.workspaceName,
                 createWorkspace: args?.createWorkspace,
                 command: args?.command,
+                wait: args?.wait,
                 name: args?.name,
                 after: args?.after,
-                before: args?.before
+                before: args?.before,
+                noSelect: args?.noSelect == true
             ))
+        case .sessionDuplicate:
+            // no options: the source session names its own workspace AND its cwd, so a duplicate is fully
+            // described by the target. The GUI half is the sidebar row's "Duplicate".
+            return actions.duplicateSession(request.target, window: request.args?.window)
         case .sessionSelect:
             return actions.selectSession(request.target, window: request.args?.window)
         case .sessionGo:

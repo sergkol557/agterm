@@ -47,7 +47,10 @@ default 0.5) — the read side
 of `session resize`, record it to restore the exact divider position),
 `splitFocused` (which pane holds focus in a session that HAS a split — `true` = the split/right pane,
 `false` = the main/left pane; omitted when there's no split; the read side of `session focus`, record it
-to restore focus via `session focus --pane left|right`), `overlay` (overlay shown),
+to restore focus via `session focus --pane left|right`),
+`commandWait` (whether a `--command` session was created with `--wait` to hold open after the command
+exits — the read side of `session new --wait`; omitted for a plain or non-holding session),
+`overlay` (overlay shown),
 `overlaySizePercent` (an open overlay's size — the
 floating panel's percent of the pane, 1–100; omitted = a full-pane overlay or no overlay, so gate on
 `overlay` first; the read side of `session overlay resize`, e.g. record it before switching to `--full`
@@ -123,7 +126,7 @@ All ten are read-only projections of GUI state.
 
 ## session
 
-- `session new [--cwd DIR] [--workspace W] [--workspace-name NAME] [--create-workspace] [--command CMD] [--name NAME] [--after SID | --before SID] [--window W]`
+- `session new [--cwd DIR] [--workspace W] [--workspace-name NAME] [--create-workspace] [--command CMD] [--wait] [--name NAME] [--after SID | --before SID] [--no-select] [--window W]`
   — create a session and focus it; returns the new id. `--cwd` sets the start directory (default
   `$HOME`). The destination workspace is addressed one of two mutually-exclusive ways: `--workspace`
   (id / unique prefix / `active`, the default) or `--workspace-name` (the sidebar label) — the latter
@@ -135,6 +138,11 @@ All ten are read-only projections of GUI state.
   default — no `/opt/homebrew/bin`), so a bare Homebrew or other non-default binary fails with exit 127.
   Wrap in a login shell for both — `--command "zsh -lc 'htop'"` — or give an absolute path
   (`/opt/homebrew/bin/htop`).
+  `--wait` (only with `--command`, else an error) HOLDS the session open after the command exits —
+  showing libghostty's press-any-key prompt with the final output intact instead of closing immediately —
+  so you can read a build/test/deploy's final output or an early failure that would otherwise flash and
+  vanish. It persists across restart (unlike an overlay's live-only `--wait`), so a restored command
+  session that re-runs its command holds again; read it back on `tree`'s `commandWait`.
   The command is persisted (`SessionSnapshot.initialCommand`) and re-runs on restore when **Restore
   running commands on restart** is on (default off → a restored session is a plain shell); a live
   captured foreground takes precedence over it. `--name`
@@ -145,7 +153,28 @@ All ten are read-only projections of GUI state.
   across all workspaces), so it names the destination workspace itself — `--after`/`--before` are
   therefore mutually exclusive with each other and with `--workspace`/`--workspace-name` (the anchor
   already picks the workspace). `agtermctl session new --after active` is the headline case: create
-  right after the current session in one round-trip.
+  right after the current session in one round-trip. `--no-select` creates the session in the BACKGROUND:
+  it is added to the sidebar but NOT selected or focused, so the current selection and focus are left
+  untouched (the new node is not `active` in `tree` — that flag is the read-back); omit it for the default
+  select-and-focus behavior. Every other addressing/placement option composes with it, and a background
+  `--create-workspace` create does not clear a focused-workspace filter either (it leaves the sidebar view
+  put instead of revealing the new workspace).
+- `session duplicate [--target] [--window W]` — create a fresh session in the SAME workspace as the
+  target, inserted directly AFTER it, rooted at the target's focused-pane working directory (the live
+  OSC 7 cwd the sidebar row shows and `session reveal` opens); selects + focuses the new session and
+  returns its id. There are NO other options — the target session names both the destination workspace
+  and the cwd — and `--target` defaults to `active`. It is equivalent to
+  `session new --cwd <source cwd> --after <source>` in ONE atomic round-trip.
+  ONLY the directory carries over: the duplicate is a plain login shell with the auto basename, and it
+  does NOT inherit the source's custom name, `--command`, split, scratch, status, flag, font size, or
+  background — it is "new session seeded with the source's cwd", not a clone of state. Errors: the usual
+  resolver errors for an unresolvable / ambiguous target, and `could not duplicate session` when creation
+  fails. READ-BACK: no new tree field — `tree` itself is the read-back, since the new session node appears
+  directly after its source, carrying the source's focused-pane cwd. That equals the source node's
+  `tree.cwd` for a non-split session (and a split focused on its primary pane); for a split focused off its
+  primary the source node's `tree.cwd` reports the primary pane while the duplicate carries the focused
+  pane's directory. It is the control half of the sidebar row's **Duplicate Session** context-menu item
+  (single-selection only).
 - `session close [--target T ...] [--window W]` — close one session, or repeat `--target` to close
   several sessions in the same window/store. Batch close honors the GUI grace-undo setting: one grouped
   undo/reopen record when enabled, immediate close when disabled. Returns `result.affected`.
@@ -555,7 +584,7 @@ so `{AGT_SESSION_NAME}` and `{AGT_SESSION_PWD}` are as untrusted as `{AGT_SELECT
 - Plus the other `$AGT_*` context vars the runner exports.
 
 Built-in action names for `map` include: `new_window`, `new_workspace`, `new_session`,
-`open_directory`, `rename_session`, `close_session`, `reopen_recent`, `undo_close`, `clear_status`, `increase_font_size`,
+`open_directory`, `rename_session`, `duplicate_session`, `close_session`, `reopen_recent`, `undo_close`, `clear_status`, `increase_font_size`,
 `decrease_font_size`, `reset_font_size`, `toggle_split`, `toggle_scratch`, `toggle_sidebar`, `quick_terminal`,
 `session_palette`, `command_palette`, `custom_command_palette`, `dashboard`, and the navigation actions (`previous_session`, `next_session`,
 `first_session`, `last_session`, `previous_attention_session`, `next_attention_session`,
