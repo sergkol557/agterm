@@ -222,6 +222,17 @@ The app must build, `swift test` must stay green, and `make lint` must pass afte
   Probe via the temp socket (`agtermctl tree --socket <tmp>/agterm.sock` — `--socket` is a per-subcommand
   option, so it goes AFTER the subcommand, never before it) and quit ONLY that instance BY PID (`kill <pid>`,
   never `pkill`).
+  **Use `kill <pid>` (SIGTERM), NOT a clean quit (`osascript … to quit` / ⌘Q), to tear down a dev instance
+  mid-experiment — a clean quit pops the "Quit Agterm?" confirmation modal on the USER's screen and
+  interrupts them.**
+  `AppDelegate.applicationShouldTerminate` shows that alert whenever a window is open (skipped only under
+  XCUITest or with nothing open), and `osascript … to quit` routes through it exactly like ⌘Q;
+  `kill <pid>` bypasses `applicationShouldTerminate`, so no dialog.
+  For a RESTORE test this loses nothing: the session tree is persisted INCREMENTALLY (`windows/<id>.json` is
+  written on session creation, BEFORE any quit), so a SIGTERM-killed instance still restores its sessions on
+  relaunch — the clean-quit flush (`applicationWillTerminate` → `library.saveAllOpen`) only adds
+  cwd-changes-since-the-last-structural-mutation and restore-running-command capture.
+  Do a clean quit ONLY when the experiment specifically needs that final flush.
   The Debug bundle id (`com.umputun.agterm.debug`) makes the dev/test build a distinct LaunchServices
   identity from the deployed `com.umputun.agterm`, which is what lets XCUITest (it terminates the app-under-test's
   bundle-id instance on launch) run WITHOUT killing the deployed app — verified,
