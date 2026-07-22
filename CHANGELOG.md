@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.16.1 - 2026-07-22
+
+### Bug Fixes
+
+- mark a Codex session `blocked` when its final assistant message ends in `?`, so ordinary questions stay visible as waiting for user input #276 @umputun
+
 ## v0.16.0 - 2026-07-22
 
 ### New Features
