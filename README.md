@@ -83,15 +83,6 @@ brew install --cask umputun/apps/agterm
 
 The cask also installs the `agtermctl` command-line tool, so cask users should not run the in-app installer as well.
 
-> [!NOTE]
-> **Homebrew upgrade note (July 2026).** A recent Homebrew change (installed-cask metadata stored as JSON) can make `brew upgrade` fail for agterm with `It seems there is already an App at '/Applications/agterm.app'`. It affects third-party tap casks in general, not only agterm. Recover with a one-time reinstall, which rewrites the install receipt:
->
-> ```sh
-> brew reinstall --cask --force agterm
-> ```
->
-> Regular `brew upgrade` works afterward. This is an upstream Homebrew issue, and the note will be removed once it is fixed.
-
 Direct download:
 
 Download the latest `.dmg` from the [releases page](https://github.com/umputun/agterm/releases), open it, and drag `agterm.app` into `/Applications`.
@@ -188,11 +179,11 @@ The theme picker (View ▸ Select Theme…, or the action palette) previews each
 
 ## Scripting agterm
 
-`agterm` can be driven from a script over a local unix-domain socket through a companion CLI, `agtermctl`. This is for personal scripting — fire-and-forget commands that manage workspaces and sessions, inject text, and invoke control actions. There is no terminal-output streaming and no event subscription.
+`agterm` can be driven from a script over a local unix-domain socket through a companion CLI, `agtermctl`. This is for personal scripting: commands manage workspaces and sessions, inject text, invoke control actions, and subscribe to control events. Terminal output is not streamed; use `session text` when a script needs to read a terminal buffer.
 
 To open a terminal at a directory without the CLI, `open -a agterm <path>` — or right-click a folder in Finder and choose **Open With ▸ agterm**. agterm adds a session in that directory to the last-active window. This works when agterm is already running (its usual state); if it isn't, launch agterm first, then run the command. The socket equivalent, and the way to place the session precisely, is `agtermctl session new --cwd <path>`.
 
-The sections below cover the common cases. All 61 commands, with every argument, return value, and error, are documented in the **[Command reference](https://agterm.com/commands)**.
+The sections below cover the common cases. All 65 commands, with every argument, return value, and error, are documented in the **[Command reference](https://agterm.com/commands)**.
 
 The app bundles `agtermctl` inside `agterm.app`. The easiest way to put it on your PATH is **Help ▸ Install Command Line Tool…**, which symlinks the bundled binary into `/usr/local/bin` (the first entry in macOS's default PATH). When that directory is user-writable it installs silently; otherwise it asks once for an administrator password.
 
@@ -206,6 +197,22 @@ cd agtermCore && swift build -c release
 ```
 
 Each command targets a session or workspace by its UUID, a unique prefix of that UUID (git-style), or the keyword `active` (the selected session / current workspace). `--target` defaults to `active`, so the current one rarely needs to be named. Mutating commands normally print the affected id; batch `session close` and `session move` accept repeated `--target` options and print the number of sessions actually changed. `tree` prints the workspace and session tree. Add `--json` for the raw response, or `--socket PATH` to override the socket path. The exit code is zero on success, non-zero on error.
+
+### Control events
+
+`agtermctl events` continuously prints app control events. It subscribes from the current tail, so events that happened before the command started are not replayed. Human output is concise; `--json` writes one bare JSON event per line and flushes it promptly for pipelines:
+
+```sh
+agtermctl events
+agtermctl events --json --kind status --kind notify
+agtermctl events --json --kind session.created,session.closed --limit 250
+```
+
+The event kinds are `status`, `notify`, `session.created`, `session.closed`, and `tree.changed`. Every event has an app-wide `seq`, a Unix `ts`, its `kind`, applicable `window`/`workspace`/`session` ids, and a kind-specific `payload`. Status payloads carry the session name, normalized status including explicit `idle` clears, a `blink` boolean, and optional pane and color fields. Notification payloads carry the effective title and body. Session lifecycle payloads carry the session name. `tree.changed` is a 100 ms coalesced signal that a window's workspace/session names, membership, or ordering changed; read `tree --json` for the new snapshot.
+
+The app retains the latest 4,096 events for its current process run. A raw `events.read` request with no cursor returns an empty batch whose `run` and `next` fields anchor a subscribe-from-now cursor. Resume with the pair using `agtermctl events --run RUN --after NEXT`; both options are required together. `--kind` may be repeated or comma-separated, `--limit` defaults to 100 and accepts 1 through 1,000, and filtered reads still advance the global cursor past nonmatching events. The streaming CLI polls immediately while draining events and waits 250 ms only after an empty page.
+
+The `--json` stream contains bare event objects, not the batch envelope, so a client that needs restart-safe resume must save `run` and `next` from raw `events.read` responses. A changed app run, expired cursor, or cursor ahead of the current sequence is a hard error with the current anchor in the raw response. `agtermctl events` exits non-zero for these cursor errors, server errors, or a missing app/socket; it never silently starts over. Stop a healthy stream with the usual SIGINT or SIGTERM behavior.
 
 `--workspace`/`--target` take an id, a unique id prefix, or `active` — never a name. (`session new` also accepts `--workspace-name <name>` to target a workspace by its sidebar label, plus `--create-workspace` to make it when none matches — the two are mutually exclusive with `--workspace`.) To create a workspace and then open a session in it, capture the printed id:
 
@@ -230,6 +237,8 @@ agtermctl session move --after 9f3c              # place the active session righ
 agtermctl session move "$ws" --target 9f3c --target abcd  # move a batch as one ordered block; --after/--before also accept repeated --target
 agtermctl session close --target 9f3c --target abcd       # close a batch with one grace-period undo
 agtermctl workspace move --to top                # reorder a workspace among its siblings (up|down|top|bottom)
+agtermctl workspace new work --collapsed          # create a workspace closed in the sidebar (fill it with session new --no-select without it opening)
+agtermctl workspace collapse --target "$ws"       # collapse one workspace in the sidebar tree; workspace expand re-opens it (per-workspace, unlike sidebar expand/collapse)
 agtermctl session split toggle                   # split the active session
 agtermctl session resize --split-ratio 0.7       # set the split divider (left-pane fraction); or --grow-left/--grow-right D
 agtermctl session scratch toggle                 # show/hide the active session's scratch terminal (on|off|toggle)
@@ -319,7 +328,7 @@ agtermctl tree --window "$w"                              # the tree of window $
 agtermctl session new --window "$w" --cwd ~/src/agterm       # open a session in window $w
 ```
 
-Inside a session's shell, `agterm` injects environment variables a script can read: `AGTERM_ENABLED=1`, `AGTERM_WINDOW_ID`, `AGTERM_WORKSPACE_ID`, `AGTERM_SESSION_ID`, `AGTERM_SOCKET` (the live control-socket path), `AGTERM_PANE` (which pane this shell runs in — `left` for the main pane, `right` for the split, or `scratch`; unset in an overlay), and `AGTERM_PANE_ID` (a stable per-surface token the agent-status hook forwards as `session status --pane-id`, so a status from a pane whose role went stale — a split survivor promoted into the main pane, then re-split — still resolves to the pane's current slot). So a script running in a session can drive its own window without hard-coding ids:
+Inside a session's shell, `agterm` injects environment variables a script can read: `AGTERM_ENABLED=1`, `AGTERM_WINDOW_ID`, `AGTERM_WORKSPACE_ID`, `AGTERM_SESSION_ID`, `AGTERM_SOCKET` (the live control-socket path), `AGTERM_PANE` (which pane this shell runs in — `left` for the main pane, `right` for the split, or `scratch`; unset in an overlay), and `AGTERM_PANE_ID` (a stable per-surface token the agent-status hook forwards as `session status --pane-id`, so a status from a pane whose role went stale — a split survivor promoted into the main pane, then re-split — still resolves to the pane's current slot; `session restore --pane-id` takes the same token, except that there an unresolvable one is an error rather than a silent main-pane fallback, since it would otherwise pin the wrong pane's command). So a script running in a session can drive its own window without hard-coding ids:
 
 ```sh
 agtermctl session new --window "$AGTERM_WINDOW_ID" --cwd .   # open a sibling session in this window
@@ -463,7 +472,7 @@ Where the logs and config live, how to read them, and the common problems (a key
 
 Restore reconstructs the structure, not the running processes. Three limitations follow from the design:
 
-1. Live processes are not reattached — true process survival would require a tmux-style backend, which is out of scope. By default a restored session re-spawns a fresh login shell in its saved working directory. The optional **Restore running commands on restart** toggle (General settings, off by default) re-runs the command each pane had in the foreground at the last clean quit, so a gate `ssh`, `tail -f`, or `top` comes back — but it is a re-run, not a reattach: only a single-process command restores faithfully (pipelines and compound lines do not); a force-quit or crash captures nothing; and the programs named in `restore-denylist.conf` (in the config directory, seeded with the terminal multiplexers `tmux`/`screen`/`zellij`, one command name per line) are skipped so they start fresh rather than re-launching — everything else, including `python manage.py runserver` or `node server.js`, is restored. Edit that file to add or remove entries.
+1. Live processes are not reattached — true process survival would require a tmux-style backend, which is out of scope. By default a restored session re-spawns a fresh login shell in its saved working directory. The optional **Restore running commands on restart** toggle (General settings, off by default) re-runs the command each pane had in the foreground at the last clean quit, so a gate `ssh`, `tail -f`, or `top` comes back — but it is a re-run, not a reattach: only a single-process command restores faithfully (pipelines and compound lines do not); a force-quit or crash captures nothing; and the programs named in `restore-denylist.conf` (in the config directory, seeded with the terminal multiplexers `tmux`/`screen`/`zellij`, one command name per line) are skipped so they start fresh rather than re-launching — everything else, including `python manage.py runserver` or `node server.js`, is restored. Edit that file to add or remove entries. A per-session, per-pane override can pin what a pane restores, winning over both the captured foreground and the session's own `--command`: `agtermctl session restore "claude --resume <id>" --target <session>` pins a shell line, `--none` pins nothing (the pane comes back as a plain shell), and `--clear` drops the override to fall back to auto-capture. The override is written now and consumed on the next launch — it never touches the running session — and it is sticky: it fires again on every restart until cleared, obeys the same setting but bypasses the denylist (it names its command deliberately), and reads back on `tree` as `restoreCommand` (main pane) / `splitRestoreCommand` (split pane). It exists for non-idempotent commands such as `claude --resume <id> --fork-session`, which would otherwise mint a new session on every restart: a Claude Code `SessionStart` hook can rewrite the override to the live session id on every start, so the next restart reattaches instead of forking. Ownership flips to whoever sets it — write it once and forget, and it stays pinned to a stale id. The pinned value is shell code stored in the window's state file and readable via `tree`, so it must not carry secrets.
 2. The saved working directory depends on the `GHOSTTY_ACTION_PWD` callback, which only fires when the shell has Ghostty shell-integration / OSC 7 active (auto-injected for zsh, bash, fish, and nu when the shell-integration resources are present). If the working directory is never reported, a session restores to the directory it was created in.
 3. The live working directory is persisted on quit and on every structural change (adding, closing, moving, renaming, or selecting a session), but not on every `cd` — OSC 7 fires on each prompt redraw, so saving each one would thrash the disk. A crash or force-quit therefore loses only the working-directory changes made since the last structural change or quit.
 
