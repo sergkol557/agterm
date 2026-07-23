@@ -483,6 +483,7 @@ A small ecosystem has grown around agterm. These are independent projects, not m
 **Built on agterm**
 
 - [agterm-linux](https://github.com/melonamin/agterm-linux) by [@melonamin](https://github.com/melonamin) is a Linux port (GTK4/libadwaita) built on the shared, host-free `agtermCore`. The macOS app stays here; the Linux frontend lives in that fork.
+- [Rook](https://github.com/jokius/rook) by [@jokius](https://github.com/jokius) is a native macOS terminal fork that takes agterm in a different direction, with features outside agterm's intended scope. Both projects are deliberately opinionated, with different ideas about where a focused agent terminal should stop.
 
 **Reimplementation**
 
