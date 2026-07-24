@@ -19,6 +19,7 @@ struct agtermApp: App {
     @State private var controlServer: ControlServer
     @State private var customCommandRunner: CustomCommandRunner
     @State private var appearanceObserver: SystemAppearanceObserver
+    @State private var accessibilityObserver: SystemAccessibilityObserver
 
     /// The plain `WindowGroup`'s scene id, used by `openWindow(id:)` to spawn additional windows.
     private static let windowGroupID = "terminal"
@@ -52,6 +53,9 @@ struct agtermApp: App {
         // follows the macOS light/dark appearance via an app-level KVO observer on
         // NSApp.effectiveAppearance (see SystemAppearanceObserver). No dependencies; started in `.task`.
         _appearanceObserver = State(initialValue: SystemAppearanceObserver())
+        // follows Reduce Motion / Reduce Transparency through NSWorkspace's accessibility display
+        // notification and fans live changes out to AppKit consumers. SwiftUI consumers use Environment.
+        _accessibilityObserver = State(initialValue: SystemAccessibilityObserver())
     }
 
     var body: some Scene {
@@ -160,6 +164,8 @@ struct agtermApp: App {
                     // start following the macOS appearance last: `[.initial]` seeds the launch side once
                     // the eager-deck surfaces exist (idempotent, so per-window `.task` re-entry is safe).
                     appearanceObserver.start()
+                    // Consumers read current accessibility values at first render; this handles live flips.
+                    accessibilityObserver.start()
                 }
         }
         // chromeless: no system title bar (the traffic lights float over our custom titlebar row in
@@ -452,8 +458,9 @@ struct agtermApp: App {
     }
 
     /// Scratch-terminal surface factory: a third per-session shell, full-overlay rendered. Like the
-    /// overlay it is NOT wired to the session (no `view.session`/`isSplitPane`), so its PWD/title never
-    /// clobber the session's sidebar name; unlike the overlay it is kept alive when hidden. Runs a plain
+    /// overlay it is NOT operationally wired to the session (no `view.session`/`isSplitPane`), so its
+    /// PWD/title never clobber the session's sidebar name. It does retain a weak visual-config link so the
+    /// session watermark renders on it; unlike the overlay it is kept alive when hidden. Runs a plain
     /// login shell, or `session.scratchCommand` when set (`session.scratch --command`) — RUN-ONCE: the
     /// command is consumed here so a respawn after it exits is a plain shell. `autoFocus` grabs first
     /// responder on show (winning the SwiftUI/AppKit responder race); on the shell's `exit`, `closeScratch`
@@ -472,6 +479,7 @@ struct agtermApp: App {
                                       fontSize: session.fontSize.map(Float.init),
                                       command: command,
                                       autoFocus: !suppressAutoFocus, env: env)
+        view.watermarkSession = session
         let sessionID = session.id
         view.onExit = { store.closeScratch(sessionID) }
         Self.wireStatusClear(view, store: store, sessionID: sessionID, fixedPane: .scratch)

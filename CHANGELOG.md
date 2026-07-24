@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.16.1 - 2026-07-22
+
+### Bug Fixes
+
+- mark a Codex session `blocked` when its final assistant message ends in `?`, so ordinary questions stay visible as waiting for user input #276 @umputun
+
+## v0.16.0 - 2026-07-22
+
+### New Features
+
+- subscribe to status, notification, session-lifecycle, and tree-change events through the control API, with bounded cursor history and polling through `agtermctl events` #273 @umputun
+- collapse or expand individual workspaces through the control API #272 @umputun
+- pin a restore command for each session pane through `agtermctl session restore`, including persisted tree read-back and separate split-pane overrides #271 @umputun
+
+### Bug Fixes
+
+- render the session watermark on the scratch terminal instead of leaving the pane unidentified #275 @umputun
+
 ## v0.15.3 - 2026-07-20
 
 ### Improvements

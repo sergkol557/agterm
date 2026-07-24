@@ -46,7 +46,9 @@ paths:
   [nil/false = off] the "don't leave a running session" opt-in; NOT ghostty keys, save-only + fanned out into
   every open window's `AppStore` via `SettingsModel.applyAutoFollow` → `AppStore.setAutoFollow`)
   + `hiddenInterfaceElements` (raw names of title-bar / sidebar-footer chrome elements the user hid,
-  nil/empty = all shown; the `InterfaceElement` set; NOT a ghostty key — see its own bullet).
+  nil/empty = all shown; the `InterfaceElement` set; NOT a ghostty key — see its own bullet)
+  + `autoHideSidebarInactiveWindows` (only the frontmost window shows its sidebar, every other collapses;
+  nil = off; NOT a ghostty key — see its own bullet).
   `theme`/`darkTheme`/`followSystemAppearance` are the macOS light/dark appearance-sync state: `theme` is the single/light-slot theme, `darkTheme` the dark slot, `followSystemAppearance` (nil = off) the toggle; when following, `ghosttyConfigLines()` emits ghostty's raw dual `theme = light:NAME,dark:NAME` conditional and libghostty resolves the side at runtime — `ghosttyConfigLines()` takes NO `isDark` arg (see the Theme picker rule; `ThemeResolution` is gone, the dual value is reduced to the active side for the sidebar selection colors by `ThemeName.resolved(from:isDark:)`).
   The three `*StatusColorHex` (`#RRGGBB`, nil = active `#DBD9E6` muted lavender-grey + system amber/green)
   color the sidebar agent-status glyph: `SettingsModel` passes the hex to `GhosttyApp.setAgentStatusColors`
@@ -118,7 +120,9 @@ paths:
   when `backgroundOpacity < 1`, `ghosttyConfigLines()` pins `background-opacity = 0` + `background-blur = 0`
   so ghostty draws fully transparent and the window's tinted background is the single translucent layer
   (no double-tint); at full opacity those lines are omitted and the renderer paints its own background
-  as before.
+  as before. macOS Reduce Transparency is an effective presentation override only: it temporarily makes
+  the window and floating material panels opaque and unblurred while the saved opacity/blur and generated
+  renderer config stay unchanged, so disabling the system setting restores the requested presentation.
 - The app target's `SettingsModel` (`@Observable`) loads `AppSettings`, and on every change:
   saves (the opacity/blur sliders are the exception — see the end of this bullet),
   writes `ghostty-settings.conf` (loaded LAST in `GhosttyApp.loadConfig`,
@@ -165,7 +169,8 @@ paths:
   **Interface** (per-element chrome visibility, grouped into a **Title Bar** section and a **Sidebar**
   section — one default-on Toggle per `InterfaceElement`, laid out TWO per row (`twoColumnSection`) so the
   tab keeps fitting 540×590 without scrolling as the element set grows; see the `hiddenInterfaceElements`
-  bullet).
+  bullet — plus a **Multiple Windows** section with the single `autoHideSidebarInactiveWindows` toggle,
+  which is a plain default-OFF behavior Toggle, NOT an `InterfaceElement`).
   **Notifications** (a **Notifications** section with the banner / badge / attention-indicator toggles plus the Dock-bounce mode and notification-sound pickers).
   **Agent Status** (a **Colors** section with the three glyph color pickers, a **Sound** section with
   the blocked-sound picker, an **Auto-follow** section with the idle-timeout Picker
@@ -174,8 +179,10 @@ paths:
   **Key Mapping** (the config directory holding `keymap.conf` + a read-only diagnostics list + a Reload
   button — see the Keymap section).
   Captions under controls are dropped for self-explanatory controls, which is nearly all of them.
-  A caption is kept ONLY when it carries information the label can't — currently just two:
-  `Blur needs opacity below 100%` (a functional dependency) and the Ghostty-config edit-path hint.
+  A caption is kept ONLY when it carries information the label can't — currently just two positions:
+  the blur hint (`Blur needs opacity below 100%`, replaced while Reduce Transparency is on by
+  `Reduce Transparency is on; saved opacity and blur apply when it is off.`) and the Ghostty-config
+  edit-path hint.
   This keeps the busiest tab short enough that the 540×590 window fits every tab without scrolling.
   The notification toggle (`AppSettings.notificationsEnabled`, nil = on) is mirrored to `NotificationManager.bannersEnabled`
   by `SettingsModel`; it gates only the OS banner, never the badge, and is NOT a ghostty config key (no
@@ -191,7 +198,10 @@ paths:
   (the single tinted layer), applies the blur via the private `CGSSetWindowBackgroundBlurRadius` SPI
   (`dlsym`-resolved once, no-op if absent — adapted from macterm, its `fatalError` softened to a graceful
   return), and hides `NSTitlebarBackgroundView` so the tint runs continuously under the titlebar;
-  at full opacity it restores the original opaque/solid path and clears the blur.
+  at full opacity it restores the original opaque/solid path and clears the blur. The same opaque branch
+  wins whenever `NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency` is true, without
+  mutating `WindowAppearance.Chrome` or `AppSettings`, so the saved opacity/blur return when the system
+  setting is disabled.
   The macOS-26 `NavigationSplitView` sidebar is a Liquid Glass container (`NSContainerConcentricGlassEffectView : NSGlassEffectView`)
   that WRAPS the sidebar content (an ancestor, so it can't be hidden), and is NOT flattenable to the
   window tint; `sidebarGlass(in:)` finds it by walking up from the tagged `agterm-sidebar-scroll` view,
@@ -199,7 +209,14 @@ paths:
   so the sidebar reads as the same translucent surface (its blur stays Liquid Glass,
   not the window CGS blur — close, not pixel-identical).
   All of this re-applies on every `sync`, which `TitleProbeView` already drives on window key/main/fullscreen
-  transitions + `.agtermAppearanceChanged`.
+  transitions + `.agtermAppearanceChanged`. For live system-setting changes,
+  `SystemAccessibilityObserver.start()` observes
+  `NSWorkspace.accessibilityDisplayOptionsDidChangeNotification` on `NSWorkspace.notificationCenter`
+  and posts app-local `.agtermAccessibilityDisplayOptionsChanged`; each `WindowAccessor.Coordinator`
+  observes that on `NotificationCenter.default` and re-runs `applyTitlebarBlend`. SwiftUI's
+  `accessibilityReduceTransparency` environment value independently swaps the command palette and
+  Ctrl-Tab session switcher from `.regularMaterial` to opaque `.windowBackgroundColor`, and drives the
+  conditional Settings hint. All open windows and panels therefore update without a relaunch.
 - **`configDirectory` + the keymap (see the Keymap section).**
   `AppSettings.configDirectory: String?` (nil = the default) holds the directory that contains `keymap.conf`.
   `SettingsModel` resolves it through the host-free `ConfigPaths.configDirectory(setting:stateDir:home:)`
@@ -458,7 +475,36 @@ paths:
   round-trip/tolerant-decode tests already iterate `allCases`.
   Do this only AFTER the user agrees the element should be user-toggleable — some chrome is intentionally
   always-on — per the propose-then-ask working-norm in the root `CLAUDE.md` (never automatic).
+- **`autoHideSidebarInactiveWindows` (only the frontmost window shows its sidebar, opt-in, Interface tab).**
+  `AppSettings.autoHideSidebarInactiveWindows: Bool?` (nil = OFF, the default-off precedent like
+  `restoreRunningCommand`/`attentionButtonEnabled`) makes the frontmost open window show its sidebar and
+  every OTHER open window collapse its own.
+  NOT a ghostty key (`writeGhosttyConfig` no-ops, no surface reload).
+  It is the non-observable chrome-mirror pattern (like `attentionButtonEnabled`): `SettingsModel.setAutoHideSidebarInactiveWindows`
+  saves + `applyAutoHideSidebarInactiveWindows` pushes `settings.autoHideSidebarInactiveWindows ?? false`
+  into the `GhosttyApp.autoHideSidebarInactiveWindows` flag.
+  The DRIVER is host-free: `WindowLibrary.applyInactiveWindowSidebarHiding()` sets the active window's
+  `sidebarVisible = true` and every other open store's to `false` (`setSidebarVisible` no-ops an already-correct
+  window, so only the windows that actually change write/persist/notify).
+  `WindowAccessor.reportFrontmost` reads the mirror and invokes the driver on EVERY window activation
+  (becomeKey/becomeMain), NOT gated by the `frontmostWindowID != id` change-guard — that guard now wraps
+  only the frontmost-id persist + the frontmost-changed post.
+  Running the driver unconditionally is what makes new-window creation (`newWindow()` pre-sets
+  `frontmostWindowID` before the window keys) and launch reconcile; it still fires only on
+  becomeKey/becomeMain and NEVER on a resign, so switching to another app leaves every sidebar untouched.
+  `setAutoHideSidebarInactiveWindows` also invokes the driver ONCE when the toggle flips ON, so it takes
+  effect immediately instead of waiting for the next window switch.
+  ABSOLUTE rule, no per-window intent memory: sidebar visibility is entirely focus-driven while on, so a
+  manual ⌃⌘S hide on the frontmost window is transient — it re-shows on the next refocus (the user-chosen
+  semantics; turning the feature OFF leaves background windows collapsed until manually reopened).
+  Because the driver writes the persisted per-window `sidebarVisible`, a GUI-only auto-hide is exactly the
+  `.agtermSidebarVisibilityChanged` case `ControlServer` already observes to refresh the `window.list` cache.
+  GUI-only and keep-in-sync EXEMPT (only `theme.set`/`config.reload` touch settings over the socket; the
+  sidebar capability itself already has full control coverage via the `sidebar` command + the `sidebarVisible`
+  read-back on `tree`/`window.list`).
+  Default-off + round-trip covered host-free in `AppSettingsTests`; the driver in `WindowLibraryTests`
+  (`applyInactiveWindowSidebarHiding*`); the mirror wiring is app-target (build/manually verified, no app
+  unit-test host).
 - **A Settings toggle's DESCRIPTION stays single-line short-form** — a terse hint, not a manual.
   No detailed multi-line explanation of what the toggle does and no cross-refs to other toggles;
   keep the minimal style (see also the flag-description convention).
-

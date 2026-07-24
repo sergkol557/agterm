@@ -210,6 +210,7 @@ private struct AppearanceSettingsView: View {
     let model: SettingsModel
     private let themes = SettingsCatalog.themeNames()
     private let fonts = SettingsCatalog.monospacedFontFamilies()
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
         Form {
@@ -276,7 +277,11 @@ private struct AppearanceSettingsView: View {
                         .frame(width: 42, alignment: .trailing)
                 }
                 .disabled((model.settings.backgroundOpacity ?? 1) >= 1)
-                SettingHint("Blur needs opacity below 100%.")
+                if reduceTransparency {
+                    SettingHint("Reduce Transparency is on; saved opacity and blur apply when it is off.")
+                } else {
+                    SettingHint("Blur needs opacity below 100%.")
+                }
 
                 HStack {
                     Text("Sidebar Tint")
@@ -405,9 +410,20 @@ private struct InterfaceSettingsView: View {
         Form {
             twoColumnSection("Title Bar", elements: InterfaceElement.allCases.filter { $0.section == .titleBar })
             twoColumnSection("Sidebar", elements: InterfaceElement.allCases.filter { $0.section == .sidebar })
+            Section("Multiple Windows") {
+                Toggle("Show sidebar only in the active window", isOn: autoHideSidebarInactiveWindows)
+                    .accessibilityIdentifier("settings-auto-hide-inactive-sidebars")
+            }
         }
         .formStyle(.grouped)
         .padding()
+    }
+
+    /// Default-OFF binding: ON hides the sidebar on every non-frontmost window (writes true), OFF maps back
+    /// to nil to keep `settings.json` minimal — the default-off idiom shared with the other opt-in toggles.
+    private var autoHideSidebarInactiveWindows: Binding<Bool> {
+        Binding(get: { model.settings.autoHideSidebarInactiveWindows ?? false },
+                set: { model.setAutoHideSidebarInactiveWindows($0 ? true : nil) })
     }
 
     /// A section whose toggles lay out TWO per row, so the tab keeps fitting the fixed Settings window

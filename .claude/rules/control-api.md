@@ -113,15 +113,17 @@ paths:
   is the first hook afterwards), and merges SIX Codex lifecycle hooks into `~/.codex/config.toml` with a
   `.bak`.
   Those six events call the dedicated `agterm-codex-status.sh` adapter with lifecycle actions.
-  The adapter maps SessionStart to `idle`, UserPromptSubmit/PreToolUse/PostToolUse to `active --blink`,
-  and Stop to `completed --auto-reset` through the generic wrapper.
+  The adapter maps SessionStart to `idle` and UserPromptSubmit/PreToolUse/PostToolUse to `active --blink`.
+  On Stop it reads Codex's final assistant message: a message containing `?`
+  maps to `blocked`; every other message maps to `completed --auto-reset` through the generic wrapper.
   `PermissionRequest` is only a candidate signal because Codex fires it before Auto Review decides whether
   a person is needed.
   A per-session/pane watcher reads the visible terminal footer through `agtermctl session text` and reports
   `blocked` only after a real approval or structured-question dialog appears.
   Automatic approvals and denials never become `blocked`.
-  This replaces a retired `codex-notify.sh` that keyword-matched the turn's final message and misfired both
-  ways (issue #193; the merge also strips the old `notify = [...codex-notify.sh...]` line).
+  This replaces a retired `codex-notify.sh` that broadly keyword-matched the turn's final message and
+  misfired both ways (issue #193; the merge also strips the old
+  `notify = [...codex-notify.sh...]` line).
   The Codex merge PARSES the config with `TOMLDecoder` (a pure-Swift, spec-compliant parser — the one
   dependency `agtermCore` links besides swift-argument-parser) to decide the outcome
   (`AgentHooksInstall.CodexMergeOutcome`): a marker block carrying an older agterm wrapper is refreshed
@@ -362,8 +364,10 @@ paths:
   (still false for a FLOATING overlay, preserving the NSSplitView-overrun invariant).
   GUI half: ⌘J (`BuiltinAction.toggleScratch`), title-bar `scratch-toggle` button,
   View ▸ Show/Hide Scratch, the ⌃⇧P palette "Toggle Scratch" — all through `AppActions.toggleScratch()`.
-  The scratch surface is NOT wired to the session (no `view.session`, like the overlay) so its PWD/title
-  never clobber the sidebar name; `autoFocus` grabs first responder on show,
+  The scratch surface is NOT operationally wired to the session (no `view.session`, like the overlay) so
+  its PWD/title never clobber the sidebar name; a separate weak `watermarkSession` link carries only the
+  owning session's visual config, so its background watermark/color renders on the scratch too. `autoFocus`
+  grabs first responder on show,
   the detail pane's `.onChange(of: scratchActive)` reclaims it on hide.
   Four-point keep-in-sync audit: (1) `case sessionScratch = "session.scratch"` + the new `ControlSessionNode.scratch`
   flag in `ControlProtocol.swift` (reuses `ControlArgs.mode`), (2) the `.sessionScratch` dispatch arm
@@ -1450,7 +1454,7 @@ paths:
   opacity/color/fit/position validated against the shared host-free `WatermarkConfig`,
   used by BOTH the CLI `validate()` and the server.
   The `BackgroundWatermark` spec (host-free, `Codable`) is persisted in `SessionSnapshot` (survives restart)
-  via `AppStore.setBackgroundWatermark`, then applied to the session main + split surfaces as a PER-SURFACE
+  via `AppStore.setBackgroundWatermark`, then applied to the session main + split + scratch surfaces as a PER-SURFACE
   ghostty config overlay: `GhosttyApp.configWithOverlay` builds the same base files + an overlay file
   (`WatermarkConfig.overlayText`: for image/text the `background-image*` lines + `background-opacity = 1`
   so the image shows even under window translucency, which pins the global `background-opacity` to 0;
