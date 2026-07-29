@@ -2,7 +2,7 @@
 
 [![Build Status](https://github.com/umputun/agterm/workflows/build/badge.svg)](https://github.com/umputun/agterm/actions) [![Coverage Status](https://coveralls.io/repos/github/umputun/agterm/badge.svg?branch=master)](https://coveralls.io/github/umputun/agterm?branch=master)
 
-**[agterm.com](https://agterm.com)** · [Documentation](https://agterm.com/docs) · [Command reference](https://agterm.com/commands)
+**[agterm.com](https://agterm.com)** · [Documentation](https://agterm.com/docs) · [Command reference](https://agterm.com/commands) · [Cookbook](cookbook/)
 
 `agterm` is a native macOS terminal for working with AI coding agents across many sessions at once. It is intentionally opinionated: rather than scattering shells across tabs, it organizes them into named workspaces, each holding the sessions for one project or context, so several agent-driven sessions can run side by side and you can move between them without losing track of which is which. The motivation is specific: running several coding agents at once means many long-lived sessions, each progressing on its own, and a tabbed terminal loses track of them quickly. agterm keeps them organized and makes it obvious which session needs you. None of this is limited to agents. It also works as a capable general-purpose terminal for everyday multi-project work.
 
@@ -14,7 +14,7 @@ What it does:
 - **Control API and CLI.** A bundled tool, `agtermctl`, drives almost everything over a local socket: create sessions, type into them, run a program in an overlay and read its exit status, move and resize windows, or post a notification tied to a specific session. A script or an agent can set up and drive its own layout, and send you a notification from the session it was working in.
 - **Splits, scratch, and overlays.** Split a session into two shells, open a scratch terminal over it, or run a program in a full or floating overlay without disturbing the shell underneath.
 - **Agent skill.** An installable skill (Help ▸ Install Agent Skill…) teaches Claude Code or Codex the control model and the `agtermctl` commands, so an agent running inside agterm can build its own layout, run overlays, manage windows, and show images inline without you explaining the API.
-- **Agent status.** A coding agent reports its state (active, blocked, or completed) onto its session's row, so you can see which of many running agents needs you. Status hooks for Claude Code, Codex, Pi, and other agents install from Help ▸ Install Agent Status Hooks….
+- **Agent status.** A coding agent reports its state (active, blocked, or completed) onto its session's row, so you can see which of many running agents needs you. Status hooks for Claude Code, Codex, Pi, OpenCode, and other agents install from Help ▸ Install Agent Status Hooks….
 
 For the real terminal work, rendering, VT parsing, and shell I/O, `agterm` embeds [Ghostty](https://ghostty.org)'s engine (libghostty); everything above is `agterm`'s own.
 
@@ -92,7 +92,7 @@ Download the latest `.dmg` from the [releases page](https://github.com/umputun/a
 The app's **Help** menu has three one-time installers. None are needed to use agterm as a terminal; each connects it to a wider workflow, and you can run any of them later.
 
 - **Install Command Line Tool…** puts the bundled `agtermctl` on your `PATH` (a symlink in `/usr/local/bin`) so you can script the app from a shell. The Homebrew cask already installs it, so cask users can skip this one. See [Scripting agterm](#scripting-agterm).
-- **Install Agent Status Hooks…** lets a coding agent (Claude Code, Codex, Pi, or others) report its state onto its session's sidebar row, so you can tell at a glance which of several running agents is active, blocked, or finished. See [Agent status](#agent-status).
+- **Install Agent Status Hooks…** lets a coding agent (Claude Code, Codex, Pi, OpenCode, or others) report its state onto its session's sidebar row, so you can tell at a glance which of several running agents is active, blocked, or finished. See [Agent status](#agent-status).
 - **Install Agent Skill…** teaches Claude Code or Codex how to drive agterm through `agtermctl`, so an agent running inside a session can build its own layout, run overlays, and manage windows without you explaining the API. It drives the app through the command-line tool, so install that one too.
 
 ## Build from source
@@ -105,6 +105,7 @@ Requirements:
 - macOS 14 or later.
 - Xcode 26 with `xcodegen` on `PATH`, plus its Metal Toolchain (auto-downloaded on first setup).
 - Homebrew, for the `zig@0.15` formula `scripts/setup.sh` builds libghostty with.
+- Node.js 22.7+ (or 20.19+ on the 20.x line) on `PATH` for the OpenCode status-plugin unit tests (`OpenCodeStatusHookTests` spawns it; those versions unflag module-syntax detection for the plugin's bare `.js`). The app itself does not need Node at runtime; without a qualifying Node those tests skip.
 
 ```sh
 scripts/setup.sh   # build libghostty from ghostty source + stage resources (idempotent; first run takes a few min)
@@ -147,13 +148,13 @@ agterm arranges terminals into a small hierarchy. These are the only terms you n
 
 **Workspace.** A workspace is a named group of sessions for one project or context, for example "work" or "personal". Sessions belong to a workspace and can move between workspaces while still running, keeping their shell and scrollback. There is always at least one workspace.
 
-**Window.** A window is a whole set of workspaces and sessions in its own on-screen macOS window, with its own sidebar. Each window has its own sessions, so "work" and "personal" can run as two separate windows at once, each with its own tree. You keep a library of windows and open one per on-screen window; the windows open at quit reopen on the next launch with their frames.
+**Window.** A window is a whole set of workspaces and sessions in its own on-screen macOS window, with its own sidebar. Each window has its own sessions, so "work" and "personal" can run as two separate windows at once, each with its own tree. You keep a library of windows and open one per on-screen window; the windows open at quit reopen on the next launch with their frames. Windows are also fully scriptable: `agtermctl window` can create, raise, move, resize, and minimize them, so a few lines of shell can give every window the same frame and park all but the one you are on, turning several windows into what feels like one that switches contents. Right-click agterm's Dock icon for New Session, Quick Terminal, Dashboard, recent sessions, and sessions needing attention. The Dock menu is scoped to the last-active window: its lists and actions stay tied to that window even if another window comes forward while the menu is open.
 
-**Flagging and focus.** Two ways to cut down a busy sidebar. Flag a few sessions from different workspaces to get a flat working-set view of just those; a flag is durable and survives a move. Focus a single workspace to hide the others, with a one-click way back. The two are independent.
+**Flagging and focus.** Two ways to cut down a busy sidebar. Flag a few sessions from different workspaces to get a flat working-set view of just those; a flag is durable and survives a move. Focus a set of workspaces to hide the rest, with a one-click way back. **Focus** in a workspace row's context menu zooms to that one workspace, and **Add to Focus** marks it alongside whatever is already marked — marking alone never narrows the tree, so a working set is built row by row with everything still on screen and applied once with the grid button at the bottom of the sidebar. A marked workspace row draws a heavier grid icon; the button applies or suspends the filter without losing the set, and is disabled when nothing is marked. Creating a workspace while the filter is on adds it to the set, and selecting a session outside the set suspends the filter rather than discarding it. The set is per-window and remembered across restarts. The two are independent.
 
 Sidebar session rows support Shift-click range selection and Cmd-click toggling for batch work. Right-clicking inside a multi-selection keeps the batch for Flag/Unflag, Close, and Move to; right-clicking outside narrows to the clicked row. Dragging from a selected row moves the selected sessions as one ordered block. **Duplicate Session** — in a single session's context menu, right after Rename — opens a fresh session in the same workspace, right after that one, in its current directory (a plain new shell: only the directory carries over, nothing else about the session does).
 
-**Finder integration.** In the tree view, drag folders from Finder onto a workspace or session row to open one session per folder there; drop on empty sidebar space to use the focused/current workspace. Collapsed workspaces spring open while you hover and close again if you cancel. Dropping more than 20 folders at once is rejected. **Reveal in Finder** in the session context menu or main menu selects the focused pane's current directory (and is disabled if that directory no longer exists). Folder-picking panels also start in the focused pane's directory when it is available.
+**Finder integration.** In the tree view, drag folders from Finder onto a workspace or session row to open one session per folder there; drop on empty sidebar space to use the current workspace, or the focused one when the filter is applied to exactly one workspace (the only case where the tree shows a single unambiguous target). Collapsed workspaces spring open while you hover and close again if you cancel. Dropping more than 20 folders at once is rejected. **Reveal in Finder** in the session context menu or main menu selects the focused pane's current directory (and is disabled if that directory no longer exists). Folder-picking panels also start in the focused pane's directory when it is available.
 
 **Notifications.** A program in any session can raise a desktop notification (via OSC 9 / 777, or the control API). It shows as a banner and a count badge on the session's row; clicking the banner jumps to the exact pane that raised it. When agterm is in the background, an opt-in setting can bounce its Dock icon once, or keep it bouncing until you focus agterm (off by default). An optional notification sound (default None) attaches a system sound to each delivered banner — say, an agent finishing a turn in a background session; it rides the banner, so it follows the banner toggle and is silenced by Do Not Disturb. The badge clears when you visit the session, or headlessly with `agtermctl session seen` — so an orchestrator driving a session over the socket can acknowledge its notifications without pulling focus to it (`agtermctl tree --json` reports each session's `unseen` count). For a coding agent that just needs to say it is waiting on you, [Agent status](#agent-status) is usually the better fit.
 
@@ -173,7 +174,7 @@ The same recently-used history decides where you land when you close the session
 
 ## Settings
 
-Settings (Cmd+,) has six tabs. **General** covers mouse scroll speed and right-click-to-paste, where a new session opens, an opt-in toggle to re-run each pane's foreground command on restart, an opt-in confirmation before closing a session, and whether to load your global Ghostty config. **Appearance** sets the terminal font and theme (512 bundled themes), the toolbar mode, the window background opacity and blur, the sidebar tint, the sidebar font size, and how much the inactive split pane dims; a "Follow system appearance" toggle (off by default) reveals a second picker for the other appearance, so the theme tracks macOS light/dark mode live. With macOS Reduce Transparency enabled, agterm temporarily presents translucent windows, command palettes, and session switchers as opaque and unblurred without changing the saved opacity or blur; disabling it restores those settings. Reduce Motion keeps status colors and glyphs visible but suppresses their repeating sidebar and dashboard pulses. The toolbar has three modes: **Normal** shows the title with the working directory beneath it, **Compact** (the default) is a single title row, and **Hidden** drops the whole titlebar row and the window's traffic-light buttons for a full-bleed terminal with no chrome — an invisible strip along the top edge still moves the window and double-click-zooms it, and you close, minimize, or zoom the window from the keyboard or the Window menu. **Interface** turns individual chrome controls on or off, each shown by default: in the title bar the sidebar toggle, the session name, the window name, and the recent-sessions, scratch, split, dashboard, and quick-terminal buttons; in the sidebar the new-workspace, new-session, and flagged-view footer buttons plus the per-workspace add-session "+" revealed on hover — so you can pare the chrome down to just what you use (the actions stay available from the menus, keyboard, and control channel). A **Multiple Windows** option (off by default) shows the sidebar only in the frontmost window and collapses it on every other, so with several windows open only the one you are working in carries a sidebar; switching windows moves the sidebar with focus, and switching to another app leaves every sidebar as it was. **Notifications** covers the banner, the unseen-count badge, the Dock-icon bounce for a background notification (off, once, or until you focus agterm), the notification sound (a system sound played when a notification is delivered; None by default), and the title-bar attention indicator. **Agent Status** sets the status-glyph colors, the blocked-session sound, and an idle timeout to auto-follow blocked sessions. **Key Mapping** points at the directory holding `keymap.conf`, lists any parse errors, and reloads it. Changes apply live to the open terminals.
+Settings (Cmd+,) has six tabs. **General** covers mouse scroll speed and right-click-to-paste, where a new session opens, an opt-in toggle to re-run each pane's foreground command on restart, an opt-in confirmation before closing a session, and whether to load your global Ghostty config. **Appearance** sets the terminal font and theme (512 bundled themes), the toolbar mode, the window background opacity and blur, the sidebar tint, the sidebar font size, and how much the inactive split pane dims; a "Follow system appearance" toggle (off by default) reveals a second picker for the other appearance, so the theme tracks macOS light/dark mode live. With macOS Reduce Transparency enabled, agterm temporarily presents translucent windows, command palettes, and session switchers as opaque and unblurred without changing the saved opacity or blur; disabling it restores those settings. Reduce Motion keeps status colors and glyphs visible but suppresses their repeating sidebar and dashboard pulses. The toolbar has three modes: **Normal** shows the title with the working directory beneath it, **Compact** (the default) is a single title row, and **Hidden** drops the whole titlebar row and the window's traffic-light buttons for a full-bleed terminal with no chrome — an invisible strip along the top edge still moves the window and double-click-zooms it, and you close, minimize, or zoom the window from the keyboard or the Window menu. **Interface** turns individual chrome controls on or off, each shown by default: in the title bar the sidebar toggle, the session name, the window name, and the recent-sessions, scratch, split, dashboard, and quick-terminal buttons; in the sidebar the new-workspace, new-session, flagged-view, and workspace-filter footer buttons plus the per-workspace add-session "+" revealed on hover — so you can pare the chrome down to just what you use (the actions stay available from the menus, keyboard, and control channel). A **Multiple Windows** option (off by default) shows the sidebar only in the frontmost window and collapses it on every other, so with several windows open only the one you are working in carries a sidebar; switching windows moves the sidebar with focus, and switching to another app leaves every sidebar as it was. **Notifications** covers the banner, the unseen-count badge, the Dock-icon bounce for a background notification (off, once, or until you focus agterm), the notification sound (a system sound played when a notification is delivered; None by default), and the title-bar attention indicator. **Agent Status** sets the status-glyph colors and shapes, the blocked-session sound, and an idle timeout to auto-follow blocked sessions. **Key Mapping** points at the directory holding `keymap.conf`, lists any parse errors, and reloads it. Changes apply live to the open terminals.
 
 The theme picker (View ▸ Select Theme…, or the action palette) previews each bundled theme on the open terminals as you move through the list, so you see it before committing. Enter commits and syncs it to Settings; Esc reverts to the one you started on. While following the system appearance, the picker edits the theme for the appearance you are in; the control channel drives both slots with `agtermctl theme set --light NAME --dark NAME` (or either flag alone).
 
@@ -183,11 +184,25 @@ The theme picker (View ▸ Select Theme…, or the action palette) previews each
 
 To open a terminal at a directory without the CLI, `open -a agterm <path>` — or right-click a folder in Finder and choose **Open With ▸ agterm**. agterm adds a session in that directory to the last-active window. This works when agterm is already running (its usual state); if it isn't, launch agterm first, then run the command. The socket equivalent, and the way to place the session precisely, is `agtermctl session new --cwd <path>`.
 
-The sections below cover the common cases. All 65 commands, with every argument, return value, and error, are documented in the **[Command reference](https://agterm.com/commands)**.
+The sections below cover the common cases. All 71 commands, with every argument, return value, and error, are documented in the **[Command reference](https://agterm.com/commands)**.
 
 The app bundles `agtermctl` inside `agterm.app`. The easiest way to put it on your PATH is **Help ▸ Install Command Line Tool…**, which symlinks the bundled binary into `/usr/local/bin` (the first entry in macOS's default PATH). When that directory is user-writable it installs silently; otherwise it asks once for an administrator password.
 
 To let a coding agent drive agterm without you explaining the API, install the bundled agent skill with **Help ▸ Install Agent Skill…**. Claude Code and Codex share the same skill format, so it installs to whichever you have, `~/.claude/skills/agterm/` and/or `~/.codex/skills/agterm/`. The skill teaches the agent the control model and the full `agtermctl` command set, so an agent running inside agterm can create sessions, run overlays, manage windows, and reload the keymap on its own. It drives the app through `agtermctl`, so install the CLI too.
+
+The same skill is also published as a plugin from this repository, which is the better route if you keep your agent's config somewhere other than `~/.claude` or `~/.codex` — the agent does the installing, so the skill lands wherever that agent actually looks, and updates through the agent's own plugin commands:
+
+```sh
+# Claude Code
+claude plugin marketplace add umputun/agterm
+claude plugin install agterm@agterm
+
+# Codex
+codex plugin marketplace add umputun/agterm
+codex plugin add agterm@agterm
+```
+
+Use one route or the other, not both — a machine with both ends up with two copies of the skill, and which one the agent picks is not defined. Adding the marketplace clones this whole repository, which is an app rather than a skill library; both CLIs take a `--sparse` option on `marketplace add` to limit the checkout, and it needs to cover the marketplace manifest as well as `plugins/agterm`.
 
 `agtermctl` also lives in the `agtermCore` Swift package and builds standalone without Xcode or libghostty:
 
@@ -197,6 +212,25 @@ cd agtermCore && swift build -c release
 ```
 
 Each command targets a session or workspace by its UUID, a unique prefix of that UUID (git-style), or the keyword `active` (the selected session / current workspace). `--target` defaults to `active`, so the current one rarely needs to be named. Mutating commands normally print the affected id; batch `session close` and `session move` accept repeated `--target` options and print the number of sessions actually changed. `tree` prints the workspace and session tree. Add `--json` for the raw response, or `--socket PATH` to override the socket path. The exit code is zero on success, non-zero on error.
+
+### Native picker
+
+`agtermctl pick` reads choices from stdin and opens agterm's native fuzzy picker.
+Input can be nonblank lines or a JSON array of objects with `id`, `label`, and an optional `subtitle`.
+The default call blocks and prints terminal-result JSON: picked item, custom query, or cancellation.
+Use `--allow-custom` to accept a query that does not match an item, `--window` to target another open window, and `--follow` to raise that window.
+
+```sh
+printf '%s\n' staging production | agtermctl pick --prompt "Deploy where?"
+
+pick_id=$(printf '%s\n' alpha beta | agtermctl pick --no-block | jq -r '.id')
+agtermctl pick result "$pick_id"      # bare JSON result; exit 1 while pending, 2 when cancelled
+agtermctl pick cancel "$pick_id"
+agtermctl tree --json | jq -r '.result.tree.pickPending // empty'
+```
+
+Only one picker can be pending per window.
+The top-level `pickPending` tree field carries its id and is omitted after it resolves.
 
 ### Control events
 
@@ -208,7 +242,7 @@ agtermctl events --json --kind status --kind notify
 agtermctl events --json --kind session.created,session.closed --limit 250
 ```
 
-The event kinds are `status`, `notify`, `session.created`, `session.closed`, and `tree.changed`. Every event has an app-wide `seq`, a Unix `ts`, its `kind`, applicable `window`/`workspace`/`session` ids, and a kind-specific `payload`. Status payloads carry the session name, normalized status including explicit `idle` clears, a `blink` boolean, and optional pane and color fields. Notification payloads carry the effective title and body. Session lifecycle payloads carry the session name. `tree.changed` is a 100 ms coalesced signal that a window's workspace/session names, membership, or ordering changed; read `tree --json` for the new snapshot.
+The event kinds are `status`, `notify`, `session.created`, `session.closed`, and `tree.changed`. Every event has an app-wide `seq`, a Unix `ts`, its `kind`, applicable `window`/`workspace`/`session` ids, and a kind-specific `payload`. Status payloads carry the session name, normalized status including explicit `idle` clears, a `blink` boolean, and optional pane, color and shape fields. Notification payloads carry the effective title and body. Session lifecycle payloads carry the session name. `tree.changed` is a 100 ms coalesced signal that a window's workspace/session names, membership, or ordering changed; read `tree --json` for the new snapshot.
 
 The app retains the latest 4,096 events for its current process run. A raw `events.read` request with no cursor returns an empty batch whose `run` and `next` fields anchor a subscribe-from-now cursor. Resume with the pair using `agtermctl events --run RUN --after NEXT`; both options are required together. `--kind` may be repeated or comma-separated, `--limit` defaults to 100 and accepts 1 through 1,000, and filtered reads still advance the global cursor past nonmatching events. The streaming CLI polls immediately while draining events and waits 250 ms only after an empty page.
 
@@ -230,7 +264,7 @@ agtermctl session new --cwd ~/src/agterm --no-select  # create in the background
 agtermctl session duplicate --target 9f3c        # a second plain shell in that session's workspace and cwd, right after it (only the directory carries over)
 agtermctl session type --target 9f3c $'make test\n'      # inject text into a session by id prefix
 echo 'make test' | agtermctl session type --target active --stdin
-agtermctl session go --to next                   # step to the next session (next|prev|first|last; stops at ends)
+agtermctl session go --to next                   # step to the next session (next|prev|first|last; wraps at the ends, within the visible set)
 agtermctl session move --to up                   # reorder the active session within its workspace (up|down|top|bottom)
 agtermctl session move "$ws"                      # relocate the active session to another workspace (appends)
 agtermctl session move --after 9f3c              # place the active session right after another (--before to precede it); relocates cross-workspace if the anchor lives elsewhere
@@ -246,7 +280,9 @@ agtermctl session flag on                        # flag the active session for t
 agtermctl session reveal --target 9f3c           # reveal the focused pane's cwd in Finder
 agtermctl session seen --target 9f3c             # clear a session's unseen-notification badge without visiting it (focus-free)
 agtermctl sidebar mode flagged                   # show only the flagged sessions as a flat list (tree|flagged|toggle)
-agtermctl workspace focus on                     # collapse the sidebar tree to the active workspace (on|off|toggle)
+agtermctl workspace focus on                     # mark the active workspace alone and apply the sidebar focus filter (on|off|toggle|add)
+agtermctl workspace focus add --target a1b2      # mark another workspace too; add never narrows the tree on its own
+agtermctl workspace filter on                    # apply the marked set (on|off|toggle); filter off suspends it without losing the set
 agtermctl session search "error"                 # open the search bar and highlight matches; prints the "N of M" counter
 agtermctl session search --next                  # step to the next match (--prev steps back, --close hides the bar)
 agtermctl quick toggle                           # toggle the quick terminal (show|hide|toggle)
@@ -315,8 +351,10 @@ agtermctl session type --target "$id" --select $'echo hello\n'
 ```sh
 agtermctl window list                            # id  name  [open]  [active]
 w=$(agtermctl window new work)                   # create and open a window, capture its id
+agtermctl window new proj-b --minimized          # create one already parked in the Dock
 agtermctl window select "$w"                     # raise it (opening it first if it was closed)
 agtermctl window rename "$w" personal            # rename it
+agtermctl window minimize "$w" on                # park it in the Dock (off restores, toggle flips)
 agtermctl window close "$w"                      # close its on-screen window (the bundle is kept)
 agtermctl window delete "$w"                     # delete it (the last window can't be deleted)
 ```
@@ -336,6 +374,12 @@ agtermctl session type --target "$AGTERM_SESSION_ID" $'\n'   # type into this ve
 agtermctl tree --socket "$AGTERM_SOCKET"                     # reach the same agterm this shell runs in
 ```
 
+## Cookbook
+
+The [cookbook](cookbook/) collects complete `agtermctl` workflows, each in its own directory with a README and, where it needs one, its scripts: switching the sidebar to a single project, closing a project's workspaces and bringing them back later, picking a path with `fzf` and typing it into the shell, and giving each tab its own Claude Code or Codex conversation across a restart. They are written to be copied into your own setup and edited, not only read; [cookbook/CONTRIBUTING.md](cookbook/CONTRIBUTING.md) has the rules for adding one.
+
+Recipes come from other people as well as the maintainer. Every one is reviewed before it is accepted, but they are shell scripts you run on your own machine against your own sessions, and several close sessions or delete workspaces, so read a recipe before you run it.
+
 ## Customizing keys
 
 `agterm` reads a user-editable, kitty-flavored keymap file at `~/.config/agterm/keymap.conf`. It does two things: rebind the built-in menu shortcuts, and define custom shell commands bound to keys (and listed in the action palette). The file is optional — the app ships with working defaults, and a commented starter `keymap.conf` is written on first launch. The directory holding it can be changed in **Settings ▸ Key Mapping** (the field shows the active path, with a "Choose…" picker and "Use Default").
@@ -353,7 +397,9 @@ command "Lazygit"      ctrl+a>g     agtermctl session overlay open lazygit --soc
 command "Deploy"                    ./deploy.sh
 ```
 
-A chord is modifier words joined by `+` and a base key, e.g. `cmd+shift+e` or `ctrl+\``. The modifiers are `ctrl`, `cmd`, `opt`, and `shift`. The base key is a single character or one of `tab`, `space`, `return`, `delete`. A key you type with Shift is written as `shift+<base key>` (the base key, not the shifted symbol): `shift+/` for `?`, `shift+5` for `%`, `shift+=` for `+`, `shift+.` for `>`. A custom command's chord may also be a leader sequence — chords separated by `>`, e.g. `ctrl+a>g` (press `ctrl+a`, then `g`). A `command` with no chord is palette-only. A custom command's chord must include a modifier: a bare key like `a` is rejected with a diagnostic and the line is treated as palette-only, so a binding can't silently shadow a plain terminal key (and a palette-only shell line that happens to start with a single-character token isn't swallowed as a binding).
+A chord is modifier words joined by `+` and a base key, e.g. `cmd+shift+e` or `ctrl+\``. The modifiers are `ctrl`, `cmd`, `opt`, and `shift`. The base key is a single character or one of `tab`, `space`, `return`, `delete`, `left`, `right`, `up`, `down`. A key you type with Shift is written as `shift+<base key>` (the base key, not the shifted symbol): `shift+/` for `?`, `shift+5` for `%`, `shift+=` for `+`, `shift+.` for `>`. A custom command's chord may also be a leader sequence — chords separated by `>`, e.g. `ctrl+a>g` (press `ctrl+a`, then `g`). A `command` with no chord is palette-only. A custom command's chord must include a modifier: a bare key like `a` is rejected with a diagnostic and the line is treated as palette-only, so a binding can't silently shadow a plain terminal key. The same diagnostic appears when the shell line simply starts with a bare key name — a single character, or one of the named keys like `up` or `tab` — and the line is kept as palette-only with its shell command intact.
+
+Chords are written in Latin and keep working on a non-Latin keyboard layout. A layout that cannot type ASCII — Russian, Greek, Hebrew, Arabic, Thai — resolves every chord by the physical key position, so `cmd+o` still fires on the key marked O even though it types `щ`. A layout that can type ASCII binds what it types, so an alternative Latin layout keeps its own letter positions: on Dvorak, `cmd+o` follows the O you actually type.
 
 The bindable built-in action names are:
 
@@ -365,7 +411,7 @@ close_session      reopen_recent      undo_close         clear_status
 increase_font_size decrease_font_size reset_font_size
 toggle_split       toggle_scratch     toggle_search
 toggle_sidebar     toggle_flag        toggle_flagged_view
-focus_left_pane    focus_right_pane   focus_workspace
+focus_left_pane    focus_right_pane   focus_workspace    toggle_workspace_filter
 previous_session   next_session       first_session      last_session
 previous_attention_session            next_attention_session
 quick_terminal     session_palette    command_palette
@@ -393,12 +439,15 @@ Open the file in your editor with **File ▸ Edit Keymap…** or the ⌃⇧P pal
 
 After editing the file, apply it with **File ▸ Reload Keymap**, the action palette (⌃⇧P → "Reload Keymap"), or `agtermctl keymap reload`. A malformed line never discards the rest of the file — it surfaces in the diagnostics list in Settings ▸ Key Mapping (and `keymap.reload` returns the diagnostic count) while the good lines still apply.
 
+To check what is actually bound, `agtermctl keymap list` prints every built-in with the chord it resolved to, the custom commands, each diagnostic in full, and the key equivalents the menu bar is really carrying. If a binding will not fire, compare the last two: an action whose chord no menu item holds is usually a menu problem, not a keymap one. The one deliberate exception is `undo_close` (⌘Z), which is delivered by a key monitor rather than a menu item so it never appears under the menu list.
+
 v1 limitations:
 
 - Built-in rebinds are single-chord only; leader sequences (`ctrl+a>g`) work only for custom commands.
-- The arrow keys can't be written as a chord, so the arrow-bound actions (`focus_left_pane`, `focus_right_pane`, `previous_session`, `next_session`, `previous_attention_session`, `next_attention_session`) keep their default shortcuts unless you `map` them to a parseable chord. The literal `+` and `>` can't be a bare key token (they are the chord-joiner and leader separators), but those keys are still bindable as `shift+=` and `shift+.`. Only `increase_font_size`'s default ⌘+ shows as a glyph rather than editable text, because its stored form doesn't round-trip through the file.
+- A `map` line may not bind a bare, modifier-less arrow (`map left previous_session`): a built-in rides an always-on menu key-equivalent, so a bare arrow would swallow the key in the terminal, the palettes, the dashboard grid, and every text field. Any modifier makes it bindable — `map cmd+shift+left previous_session` is fine. Custom commands already require a modifier on every chord.
+- The literal `+` and `>` can't be a bare key token (they are the chord-joiner and leader separators), but those keys are still bindable as `shift+=` and `shift+.`. Only `increase_font_size`'s default ⌘+ shows as a glyph rather than editable text, because its stored form doesn't round-trip through the file.
 - The Ctrl-Tab MRU session switcher and Ctrl-1/Ctrl-2 pane focus are not rebindable yet; they keep their current keys.
-- The action palette shows chords as live kitty syntax (e.g. `cmd+shift+e`) for both custom commands and built-in shortcuts; only chords that can't be expressed in the file fall back to a glyph (the arrow-bound actions and `increase_font_size`'s ⌘+).
+- The action palette shows built-in shortcuts as macOS glyphs (⌘⇧E) and custom commands as raw kitty syntax (`cmd+shift+e`).
 
 ## Ghostty config
 
@@ -422,6 +471,14 @@ macos-option-as-alt = true
 
 Put that in `ghostty.conf`. It also works in your global `~/.config/ghostty/config` once you enable the toggle above. The full key reference is at <https://ghostty.org/docs/config>.
 
+A `keybind` you write here follows ghostty's own rules, which differ from `keymap.conf`: a bare letter or digit binds the *character* the active layout produces, so `keybind = super+opt+ctrl+g=text:hello` stops firing the moment you switch to a non-Latin layout, where that key types `п`. Prefix the key with `key_` to bind the physical position instead:
+
+```
+keybind = super+opt+ctrl+key_g=text:hello
+```
+
+That form works on any layout. agterm's own bundled defaults already use it for ⌘C, ⌘V, and ⌘A, which is why copy, paste, and select-all keep working on a Cyrillic or Greek layout.
+
 Programs running in the terminal can read and write the macOS clipboard over OSC 52. agterm prompts before a program **reads** your clipboard, because a read hands its contents (which may include passwords or tokens) back to the program; a normal ⌘V paste is never prompted. Clipboard **writes** go through by default, matching other terminals so a remote `tmux`/`vim` yank still reaches your clipboard. To gate writes too, set `clipboard-write = ask` (prompt) or `clipboard-write = deny` (block) in `ghostty.conf`. Each prompt offers *Don't ask again this session*, which remembers your choice until agterm quits.
 
 A ⌘-click on a `file://` link — the kind `ls --hyperlink`, `eza`, and many compilers emit — reveals the file in Finder instead of opening it. A terminal renders untrusted program output, so a link could point at a `.app` or `.command`; revealing selects the file without running it, which is the security boundary — actually opening it stays a separate, explicit action. Web (`http`/`https`) and `mailto` links still open as before. A `file://` link that names another host is ignored rather than revealed, so a stray link can't trigger a Finder network mount.
@@ -430,9 +487,11 @@ Open the file with **File ▸ Edit ghostty.conf…** or the ⌃⇧P palette ("Ed
 
 ## Agent status
 
-A coding agent running in a session can flag its status on that session's sidebar row, so you can tell at a glance which of many concurrent agents needs you. The status shows as a small tinted SF Symbol just left of the notification badge: `active` is a blue ellipsis, `blocked` an amber exclamation, `completed` a green check, and `idle` is nothing. The glyph shows on every non-idle session, the selected one included. A one-time `completed` flash auto-clears once you visit the session.
+A coding agent running in a session can flag its status on that session's sidebar row, so you can tell at a glance which of many concurrent agents needs you. The status shows as a small tinted glyph just left of the notification badge: a filled circle for `active`, `blocked`, and `completed`, tinted muted lavender-grey, amber, and green in that order, and nothing at all for `idle`. The glyph shows on every non-idle session, the selected one included. A one-time `completed` flash auto-clears once you visit the session.
 
-When the sidebar is hidden the per-session glyphs go with it, so the same signal is available two more ways. An optional **title-bar bell** (turn on **Show attention indicator** in Settings ▸ General ▸ Notifications; off by default) reflects the window at a glance: dimmed when nothing needs attention, plain when a session is active or completed, and a filled amber bell when any session is blocked. Clicking it opens a **popover** of just this window's non-idle sessions, each with its status glyph, sorted blocked → active → completed (newest change first); hover to highlight and click a row to jump to that session and the pane that set its status. Pressing ⌃⇧I, choosing **Navigate ▸ Go to Attention…**, or the action palette's "Show Attention" opens the same **attention list** as a searchable palette, where Enter jumps to the session. Over the control channel, `agtermctl tree --json` now reports each session's `status` (omitted when idle) and `statusPane` (`left`|`right`|`scratch` — which pane set the status, omitted when idle or unset).
+The glyph's shape is configurable per state under **Settings ▸ Agent Status ▸ Colors and Shapes**, where each state has its own color well and shape picker on one row. The six shapes are circle (the default), square, triangle, diamond, capsule, and star, each drawn in that state's current color. Choosing a distinct shape per state adds a second signal alongside the tint, so the states stay apart at a peripheral glance and without depending on hue. The tab's Reset button returns the colors, the shapes, and the blocked sound to their defaults.
+
+When the sidebar is hidden the per-session glyphs go with it, so the same signal is available three more ways. An optional **title-bar bell** (turn on **Show attention indicator** in Settings ▸ Notifications; off by default) reflects the window at a glance: dimmed when nothing needs attention, plain when a session is active or completed, and a filled amber bell when any session is blocked. Clicking it opens a **popover** of just this window's non-idle sessions, each with its status glyph, sorted blocked → active → completed (newest change first); hover to highlight and click a row to jump to that session. A blocked or completed row also reveals the pane that set its status; an active row keeps your existing pane selection. Pressing ⌃⇧I, choosing **Navigate ▸ Go to Attention…**, or the action palette's "Show Attention" opens the same **attention list** as a searchable palette, where Enter jumps to the session. Right-clicking agterm's Dock icon exposes the last-active window's same ordered list under **Sessions Needing Attention**, alongside its recent sessions. Over the control channel, `agtermctl tree --json` now reports each session's `status` (omitted when idle) and `statusPane` (`left`|`right`|`scratch` — which pane set the status, omitted when idle or unset).
 
 **Auto-follow blocked sessions.** When several agents run at once, a session that blocks is easy to miss. Turn on **Settings ▸ Agent Status ▸ Auto-follow blocked sessions** (Disabled by default, or a 5s/10s/30s/60s/5m idle timeout) and, after you have been idle from input for that long, the window selects and focuses the oldest waiting blocked session, so you are pulled to whatever agent is waiting. It is per-window and window-wide (crossing workspaces within the window). Auto-follow pulls you to each blocked session at most once: after you have been shown a block and moved on (even without replying), it will not pull you back to it, so it walks the waiting blocks oldest-first, shows each once, then stays quiet. A session becomes eligible again only after it leaves blocked and re-enters it (a fresh block). Being parked on a blocked session likewise suppresses jumps while you stay on it. The opt-in **Don't auto-follow away from a running session** (off by default) also holds the selection put while the current session is `active`. Over the control channel, `agtermctl tree --json` reports the window's `idleMs` (milliseconds since your last input, live) and `autoFollowMs` (the configured timeout in milliseconds, omitted when Disabled); `agtermctl window list --json` reports `autoFollowMs` per window (as of the last refresh), but not the live `idleMs`.
 
@@ -446,13 +505,14 @@ agtermctl session status blocked --target "$AGTERM_SESSION_ID"     # waiting on 
 agtermctl session status completed --auto-reset --target "$AGTERM_SESSION_ID"  # done; clears when seen
 agtermctl session status blocked --sound default --target "$AGTERM_SESSION_ID" # waiting on you, with a beep
 agtermctl session status blocked --color '#ff0000' --target "$AGTERM_SESSION_ID" # per-call red tint
+agtermctl session status blocked --shape triangle --target "$AGTERM_SESSION_ID" # per-call triangle glyph
 agtermctl session status blocked --pane right --target "$AGTERM_SESSION_ID" # a split-pane agent tags its pane
 agtermctl session status idle --target "$AGTERM_SESSION_ID"        # clear it
 ```
 
-`<state>` is one of `idle | active | completed | blocked`. `--blink` requests an attention pulse; macOS Reduce Motion suppresses the repeating sidebar and dashboard animation while keeping the status visible, and the pulse resumes if Reduce Motion is disabled. `--auto-reset` makes the indicator clear back to idle the moment you visit (select) the session — used for a finished result you only need to notice once; without it the status is kept until something changes it. `--sound` plays a one-shot sound when the status is set — `default` for the system alert sound, or a system sound name (`Basso`, `Blow`, `Bottle`, `Frog`, `Funk`, `Glass`, `Hero`, `Morse`, `Ping`, `Pop`, `Purr`, `Sosumi`, `Submarine`, `Tink`, plus any custom sound in `~/Library/Sounds`); it is optional and entirely caller-driven, so the agent decides when a status change is worth an audible nudge. If you'd rather have a blocked prompt always make a sound without touching the hooks, set **Settings ▸ Agent Status ▸ Blocked sound** to a system sound (default None) — it plays whenever a session becomes `blocked`, and an explicit `--sound` on the call still overrides it. `--color` (`#rrggbb`) overrides the glyph tint for that one call — it rides the status, so the next `session status` without `--color` reverts to the configured color; use it to distinguish states beyond the fixed palette (say, a caller-specific blocked color).
+`<state>` is one of `idle | active | completed | blocked`. `--blink` requests an attention pulse; macOS Reduce Motion suppresses the repeating sidebar and dashboard animation while keeping the status visible, and the pulse resumes if Reduce Motion is disabled. `--auto-reset` makes the indicator clear back to idle the moment you visit (select) the session — used for a finished result you only need to notice once; without it the status is kept until something changes it. `--sound` plays a one-shot sound when the status is set — `default` for the system alert sound, or a system sound name (`Basso`, `Blow`, `Bottle`, `Frog`, `Funk`, `Glass`, `Hero`, `Morse`, `Ping`, `Pop`, `Purr`, `Sosumi`, `Submarine`, `Tink`, plus any custom sound in `~/Library/Sounds`); it is optional and entirely caller-driven, so the agent decides when a status change is worth an audible nudge. If you'd rather have a blocked prompt always make a sound without touching the hooks, set **Settings ▸ Agent Status ▸ Blocked sound** to a system sound (default None) — it plays whenever a session becomes `blocked`, and an explicit `--sound` on the call still overrides it. `--color` (`#rrggbb`) overrides the glyph tint for that one call — it rides the status, so the next `session status` without `--color` reverts to the configured color; use it to distinguish states beyond the fixed palette (say, a caller-specific blocked color). `--shape` (`circle`, `square`, `triangle`, `diamond`, `capsule`, or `star`) overrides the silhouette the same way, reverting to the configured shape on the next `session status` without it, so a script can mark one session for the length of a run. Both read back on `tree` as the session's `statusColor` and `statusShape`, each reporting the per-call override only.
 
-`--pane` (`left`|`right`|`scratch`, defaulting to `left` = the main pane when omitted) records which pane set the status, which has two effects: a status set from a background pane survives foreground typing in a *different* pane (only a keystroke in the owning pane clears it), and any GUI selection of the session (auto-follow, attention nav ⌃⌥↑/↓, plain session nav, the command palettes, and a sidebar click) reveals and focuses the tagged pane — flipping to the split, or showing a hidden scratch — instead of the main pane, so an agent running in a split or scratch should set its own pane to be found (the control `session go next-attention` only steps the selection, it does not itself move focus into the pane). It reads back on `tree` as each session's `statusPane`. The target session can live in any window, frontmost or not.
+`--pane` (`left`|`right`|`scratch`, defaulting to `left` = the main pane when omitted) records which pane set the status, which has two effects: a status set from a background pane survives foreground typing in a *different* pane (only a keystroke in the owning pane clears it), and when the status needs attention (`blocked` or `completed`), any GUI selection of the session (auto-follow, attention nav ⌃⌥↑/↓, plain session nav, the command palettes, a Dock-menu session, and a sidebar click) reveals and focuses the tagged pane — flipping to the split, or showing a hidden scratch — instead of the main pane. An `active` status is informational and keeps your existing pane selection. An agent that blocks or completes in a split or scratch should therefore set its own pane to be found (the control `session go next-attention` only steps the selection, it does not itself move focus into the pane). It reads back on `tree` as each session's `statusPane`. The target session can live in any window, frontmost or not.
 
 Typing into a session that's flagged for your attention (`blocked` or `completed`) clears its status back to idle, so answering a prompt or re-engaging with a finished session drops the glyph immediately. An `active` (working) session is left alone for ordinary typing — except an interrupt keystroke, Esc or Ctrl-C, which cancels the agent and also clears the glyph, so dismissing a prompt drops it at once even if the `blocked` waiting-state hadn't appeared yet.
 
@@ -462,7 +522,9 @@ For Codex, the installer merges a matching set of lifecycle hooks into `~/.codex
 
 For Pi, the installer copies a bundled TypeScript lifecycle extension to `~/.pi/agent/extensions/agterm-status.ts` when Pi has already created `~/.pi/agent`. It sets `active --blink` when Pi starts work and `completed --auto-reset` only when it settles — after automatic retries, compaction retries, and queued continuations. Pi deliberately has no built-in permission prompt or structured question event, so the extension does not infer `blocked` from its prose. It preserves a same-named extension without agterm's ownership marker; restart Pi or run `/reload` after installing or upgrading it.
 
-A generic bash/zsh/fish `shell/integration.sh` (or `.fish`) covers any agent launched as a shell command: it flags `active` while a command matching `AGTERM_AGENT_RE` runs and `idle` at the next prompt. The default regex matches `gemini`, `cursor-agent`, `aider`, `opencode`, `crush`, and `goose`; Claude Code, Codex, and Pi are excluded by default because their own hooks/extensions drive finer per-turn state that the coarse process-level `active`/`idle` would only fight. Override `AGTERM_AGENT_RE` before sourcing to change the set. All hooks are no-ops outside an agterm session.
+For OpenCode, the installer copies a bundled JavaScript lifecycle plugin to `~/.config/opencode/plugins/agterm-status.js` when OpenCode has already created `~/.config/opencode`. The file exports only the plugin function (OpenCode's legacy loader treats every export as a plugin). OpenCode `session.status` `busy`/`retry` set `active --blink` and remember the sessionID; `idle` clears that id and sets `completed --auto-reset` only when no session remains busy (so a task subagent's busy/idle pair cannot paint completed onto a still-working parent). Permission/question prompts set `blocked`. For a session already reported busy, a turn-ending `session.error` also sets `blocked` and suppresses the following `session.status(idle)` that OpenCode's halt path always publishes — including a sibling session's later idle, since every session of one OpenCode instance drives the same pane and a clean sibling must not erase a failed turn. Abort (`MessageAbortedError`) is ignored so Esc ends on completed, and a context overflow waits for the next event: `busy` means auto-compaction resumed and nothing is reported, while `idle` means the turn really ended and sets `blocked`. Reply/reject events clear blocked with `active --blink`. Deprecated `session.idle` is ignored so it does not double-fire with `session.status(type=idle)`. It preserves a same-named plugin without agterm's ownership marker; restart OpenCode after installing or upgrading it.
+
+A generic bash/zsh/fish `shell/integration.sh` (or `.fish`) covers any agent launched as a shell command: it flags `active` while a command matching `AGTERM_AGENT_RE` runs and `idle` at the next prompt. The default regex matches `gemini`, `cursor-agent`, `aider`, `crush`, and `goose`; Claude Code, Codex, Pi, and OpenCode are excluded by default because their own hooks/extensions/plugins drive finer per-turn state that the coarse process-level `active`/`idle` would only fight. Override `AGTERM_AGENT_RE` before sourcing to change the set. All hooks are no-ops outside an agterm session.
 
 ## Troubleshooting
 

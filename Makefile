@@ -5,7 +5,7 @@ INSTALL_DIR := $(HOME)/Applications
 RELEASE_APP := build/DerivedData/Build/Products/Release/agterm.app
 
 .DEFAULT_GOAL := help
-.PHONY: help prep generate build run release deploy build-ctl install-ctl test lint dist clean sync
+.PHONY: help prep generate build run release deploy build-ctl install-ctl test test-app lint dist clean sync
 
 help: ## list targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -44,6 +44,9 @@ sync: ## fetch and merge upstream, build, deploy, clean, and push
 
 test: ## host-free agtermCore unit tests (scripts/test.sh)
 	./scripts/test.sh
+
+test-app: ## application-hosted AppKit unit tests (scripts/test-app.sh)
+	./scripts/test-app.sh
 
 lint: ## swiftlint over the tree (strict — warnings fail too)
 	swiftlint lint --strict --quiet
