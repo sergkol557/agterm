@@ -131,8 +131,8 @@ targets:
           # otherwise trip the re-seal below.
           rm -rf "$CODESIGNING_FOLDER_PATH/Contents/Resources/AppIcon.icon"
           core="$SRCROOT/agtermCore"
-          swift build --package-path "$core" -c release --product agtermctl
-          src="$(swift build --package-path "$core" -c release --product agtermctl --show-bin-path)/agtermctl"
+          swift build --package-path "$core" --scratch-path "$core/.build-ctl" -c release --product agtermctl
+          src="$(swift build --package-path "$core" --scratch-path "$core/.build-ctl" -c release --product agtermctl --show-bin-path)/agtermctl"
           dest="$CODESIGNING_FOLDER_PATH/Contents/MacOS/agtermctl"
           mkdir -p "$(dirname "$dest")"
           cp -f "$src" "$dest"
