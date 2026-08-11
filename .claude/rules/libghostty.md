@@ -22,6 +22,12 @@ paths:
 - Pass `theme = light:X,dark:Y` raw. Pinned libghostty `4dcb09ada` supports conditional themes, but
   `set_color_scheme` only changes conditional state and emits an unhandled soft reload. agterm must set
   app and surface schemes, then call `update_config`.
+- A dark launch must re-side the app config through `update_config` BEFORE the first surface exists;
+  `GhosttyApp.syncLaunchColorScheme`, called from `applicationDidFinishLaunching`, owns that.
+  `Surface.init` rebuilds a surface config whose conditional state differs from the app's, keeps only
+  `working-directory`, and drops the per-surface env, `initial_input` and `command` (#260).
+  A host-built config always resolves light, and `GhosttyApp` is built before `NSApp` exists, so its own
+  appearance read is always light; the KVO reload is debounced and lands after the launch restore.
 - Observe app-level `NSApplication.effectiveAppearance` through KVO, not per-view appearance,
   `AppleInterfaceStyle`, or the early distributed notification. Post the KVO-delivered settled `isDark`
   and thread it through `reloadConfigPreservingSessionZoom`; do not use `apply`, whose unchanged text skips
@@ -58,6 +64,17 @@ paths:
   nil every store-capturing callback to break the store/session/surface/closure cycle.
 - Create surfaces only with nonzero backing size; otherwise Metal stays blank. Defer through
   `pendingSurfaceCreation` until `setFrameSize`.
+- `ghostty_surface_new` returns NULL for as long as the DISPLAY is asleep, with a valid backing size —
+  measured 21 consecutive failures over 40s, then success within ~2s of wake while the screen was still
+  LOCKED. Unlock is irrelevant; display wake is the earliest moment creation can succeed, so retrying
+  during sleep is pure spin. Nothing in the deck re-attempts on its own: every other retry path rides
+  SwiftUI layout, which does not run for an off-display window, so `updateNSView` never fires. That is why
+  a session a scheduled job creates overnight realized no surface and never ran its `--command`, while
+  `session.new` had already answered `ok` (#416). `SystemWakeObserver` posts `.agtermScreensDidWake` and
+  `GhosttySurfaceView.retryCreationAfterWake` re-attempts, bounded, because creation can still fail for a
+  second or two after the notification. A failed create also re-arms `pendingSurfaceCreation`, so the
+  layout path retries as well: the wake hook makes recovery TIMELY, not possible, and a view first
+  mounted inside that residual window registered its observer too late for the wake that just fired.
 - `working_directory`, `initial_input`, and environment strdup buffers must outlive
   `ghostty_surface_new`; retain them until destruction.
 - Reparenting invalidates the drawable while leaving terminal buffer intact. `set_size` with an unchanged
@@ -74,6 +91,23 @@ paths:
   submit a trailing newline when the program disables mode 2004. Do not reuse `inject`, which intentionally
   translates newline/return into Return for `session.type`. `pasteboardText` remains shared with clipboard
   paste, and `ShellEscape.path` keeps file paths one token; #96 newline escaping remains defense in depth.
+- AX exposure (`axExposed` in `GhosttySurfaceView+Accessibility.swift`) rides on FOUR terms: `!viewOnly`,
+  `deckVisible`, `surface != nil`, and `window?.isVisible`. Every one drives
+  `postAccessibilityExposureChange` behind the `axPostedExposed` latch, so a new term owes a post site;
+  none may be assumed to imply another. Detach posts from `viewDidMoveToWindow` ABOVE its nil-window
+  guard, the only site that sees the quick terminal unmount. `liveFocus` has a second consumer here
+  (`isAccessibilityFocused` and the AX write guard) besides the cursor, so it is not `private`.
+  Focus posts are deferred one run-loop turn because `window.firstResponder` reads stale inside the
+  responder transitions; the per-view `axPostedFocus` latch, not `axFocusPostScheduled`, is what stops a
+  resign/become pair from announcing twice. This bridge adds no user action and no per-session state, so
+  it is a genuine exemption from the control-API keep-in-sync rule: `session.type` already drives text in.
+- Both programmatic writers commit a live IME composition first through `commitOrDiscardComposition`, in
+  `GhosttySurfaceView+Input.swift` beside the `_markedText`/`_markedRange` state it operates on:
+  `insertPasted` (drop and the AX control-character branch) and `inject` (`session.type`). Text inserted
+  under a composition leaves it to re-commit on the next keystroke, landing the half-typed word after the
+  inserted text. It no-ops unless this pane is composing, and it tears the IME session down only while the
+  view holds first responder, because `inputContext` resolves to the shared context and discarding from a
+  background pane would abandon whichever view is really composing.
 - Never change the `sessionDetail` ZStack shape for per-session toggles; doing so rehosts `NSSplitView`
   into the titlebar. Search bar is a `detailPane` top-trailing overlay, above deck, scratch, and overlays.
   Overlay panel stays an always-present `sessionDetail` sibling whose internal content changes.

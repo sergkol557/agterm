@@ -183,8 +183,9 @@ public final class Session: Identifiable {
     /// a plain shell when off). Never persisted.
     @ObservationIgnored public var wasRestored = false
 
-    /// The main pane's foreground command (full argv) for restore-running-command, captured at the last clean
-    /// quit and read once by the surface factory on restore, then cleared. Persisted; nil at a prompt.
+    /// The main pane's foreground command (full argv) for restore-running-command, read once by the surface
+    /// factory on a launch restore, then cleared. Persisted; nil at a prompt. Capture sites and the
+    /// launch-only replay gate: `.claude/rules/settings.md`.
     @ObservationIgnored public var foregroundCommand: [String]?
     /// The split (right) pane's foreground command (full argv), the split analogue of `foregroundCommand`.
     @ObservationIgnored public var splitForegroundCommand: [String]?
@@ -208,6 +209,16 @@ public final class Session: Identifiable {
     /// (`isSplit`) — a hidden split builds no right surface at bootstrap, so a pending payload would instead
     /// fire on a later manual ⌘D.
     @ObservationIgnored public var pendingSplitRestoreCommand: String?
+
+    /// The main pane's TRANSIENT captured foreground command for THIS launch, copied from the persisted
+    /// `foregroundCommand` by an app-bootstrap restore and consumed by the surface factory. Never
+    /// serialized by `snapshot()`, which is what makes the launch-time strip durable: the persisted field
+    /// goes nil the moment the replay is armed, so no save landing before the surface spawns can write the
+    /// argv back over the file the strip just cleaned.
+    @ObservationIgnored public var pendingForegroundCommand: [String]?
+    /// The split analogue of `pendingForegroundCommand`, seeded only when the restored split was SHOWN
+    /// (`isSplit`) — a hidden split builds no right surface at bootstrap.
+    @ObservationIgnored public var pendingSplitForegroundCommand: [String]?
 
     /// Whether the session-wide overlay slot is OCCUPIED, by either of its two occupants: a caller's PROGRAM
     /// (`session.overlay.open`, which covers the session and owns first responder) or a passive HUD message
@@ -587,12 +598,42 @@ public final class Session: Identifiable {
         }
     }
 
-    /// Drops both unconsumed override payloads, leaving the persisted fields alone. Called where a live
-    /// `Session` leaves the tree but may return as the SAME object (the soft-close grace window): a payload
-    /// armed at bootstrap would otherwise survive the round trip and fire when its surface is rebuilt.
+    /// Takes the pane's transient captured foreground command, clearing it so it fires once. Same
+    /// consume-on-read rule as `takePendingRestoreOverride(pane:)`, and for the same reason: a leftover
+    /// payload would fire again when `makeSplitSurface` runs on a fresh ⌘D mid-session. `.scratch` is
+    /// never restored.
+    public func takePendingForegroundCommand(pane: StatusPane) -> [String]? {
+        switch pane {
+        case .left:
+            let pending = pendingForegroundCommand
+            pendingForegroundCommand = nil
+            return pending
+        case .right:
+            let pending = pendingSplitForegroundCommand
+            pendingSplitForegroundCommand = nil
+            return pending
+        case .scratch:
+            return nil
+        }
+    }
+
+    /// Drops the unconsumed CAPTURE payloads only, leaving the `session.restore` pins — persisted and
+    /// pending — armed. What `restore.clear` needs: it clears captures, and the launch arms them here
+    /// rather than in the persisted fields, so clearing those alone would leave a replay running.
+    public func clearPendingForegroundCommands() {
+        pendingForegroundCommand = nil
+        pendingSplitForegroundCommand = nil
+    }
+
+    /// Drops every unconsumed bootstrap payload — both override pins and both captured commands — leaving
+    /// the persisted fields alone. Called where a live `Session` leaves the tree but may return as the SAME
+    /// object (the soft-close grace window): a payload armed at bootstrap would otherwise survive the round
+    /// trip and fire when its surface is rebuilt.
     public func clearPendingRestoreOverrides() {
         pendingRestoreCommand = nil
         pendingSplitRestoreCommand = nil
+        pendingForegroundCommand = nil
+        pendingSplitForegroundCommand = nil
     }
 
     /// The surface on top and owning keyboard focus: an active PROGRAM overlay (full OR floating), else the

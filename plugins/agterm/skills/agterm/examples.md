@@ -802,13 +802,17 @@ choice=$(printf '%s\n' "$branches" | agtermctl pick --prompt "Check out which br
 agtermctl session hud close --target "$me"
 ```
 
-`hud update` repaints in place, no re-spawn and no blink, and it replaces the whole spec: `--detail` and
-the spinner are dropped unless repeated. `--spinner-style bar|braille|circle|blocks|dot` picks the look and
+`hud update` repaints in place, no re-spawn and no blink, and it replaces the whole spec: `--detail`,
+the spinner and `--text-color` are dropped unless repeated. `--spinner-style bar|braille|circle|blocks|dot` picks the look and
 turns the spinner on by itself (`dot` blinks instead of animating, for a panel up for minutes), and an
 update may switch style mid-flight; `--spinner-style none` stops it, which is also what a read-back's
-`none` echoes back to. `--position top|center|bottom` moves the panel (default `center`;
-`top`/`bottom` keep a fixed margin off the pane edge on their own), and `--size-percent N` overrides the
-panel's WIDTH; its height always follows the message.
+`none` echoes back to. `--position` anchors the panel to any of the nine
+`top-left|top-center|top-right|center-left|center|center-right|bottom-left|bottom-center|bottom-right`
+(default `center`), the same anchors `session background` takes, each off-center one keeping a fixed margin
+off that pane edge on its own — a corner is what keeps the panel clear of the text being read, and the bare
+`top`/`bottom` still work for the middle column. `--text-color #rrggbb` colors the text (an update can
+change it, unlike `--background-color`), and `--size-percent N` overrides the panel's WIDTH; its height
+always follows the message.
 
 Read it back from the session node, and note the panel does NOT set `overlay` — one slot, and whichever
 occupant holds it is the one that reports:
@@ -958,16 +962,17 @@ agtermctl keymap list --json \
   | jq -r '.result.keymap.menu[] | select(.enabled == false) | "\(.chord)  \(.menu) > \(.title)"'
 ```
 
-Find every chord already in use before picking one for a new binding. All THREE sources matter: a
-custom command's shortcut is delivered by the key monitor rather than a menu item, so it appears in
-`commands` and can never show up under `menu`. Miss it and a new `map` line on the same chord makes the
-next reload drop the custom binding.
+Find every chord already in use before picking one for a new binding. All FOUR sources matter: a custom
+command's shortcut and a built-in's `alternates` are delivered by the key monitor rather than a menu item,
+so they can never show up under `menu`. Miss one and a new `map` line on the same chord makes the next
+reload drop that binding. A shortcut holding alternatives is one `|`-joined string, so split it.
 
 ```bash
 agtermctl keymap list --json | jq -r '
   [ .result.keymap.actions[].chord,
-    .result.keymap.commands[].shortcut,
-    .result.keymap.menu[].chord ] | map(select(. != null)) | unique | .[]'
+    (.result.keymap.actions[].alternates // [] | .[]),
+    (.result.keymap.commands[].shortcut // "" | split("|") | .[]),
+    .result.keymap.menu[].chord ] | map(select(. != null and . != "")) | unique | .[]'
 ```
 
 Read the parse problems in full rather than just their count:

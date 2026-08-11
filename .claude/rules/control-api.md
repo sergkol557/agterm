@@ -29,6 +29,9 @@ paths:
   commands. Never add validation to the fallback switch.
 - Every change needs protocol/round-trip types, dispatcher and app action, CLI, and dispatcher/CLI/e2e
   tests. State writes also need tree/window read-back, nil omission tests, and population coverage.
+- An action whose only effect is a system-pasteboard write gets no control command. The socket never
+  writes the user's clipboard — `session copy` returns the selection so it does not have to,
+  `session paste` reads it as input — and returning the value instead duplicates what `tree` carries.
 
 ## Installation and agent integrations
 
@@ -72,7 +75,28 @@ paths:
 - Resolve socket from `AGTERM_CONTROL_SOCKET`, then `<AGTERM_STATE_DIR>/agterm.sock`, then Application
   Support. CLI `--socket` overrides. Explicit short paths avoid Unix `sun_path` near 104 bytes. Use 0600.
 - Each connection sets `SO_NOSIGPIPE` and a 5-second receive timeout. Close on non-EINTR read failure,
-  including EAGAIN. Start is idempotent, unlinks stale paths, and logs bind failure without blocking launch.
+  including EAGAIN. Start is idempotent and logs bind failure without blocking launch.
+- `ControlServer.init` takes an exclusive non-blocking `flock` on `<socketPath>.lock`, and start refuses
+  to bind while another process holds it. Ownership is decided at INIT, not at start: the launch window's
+  surfaces are built during the initial render pass and snapshot `AGTERM_SOCKET` into the pty environment,
+  while start runs from the scene's `.task` afterwards, so deciding there would hand the first shell the
+  owner's live socket. Start retries acquisition for the instance refused while the owner was still alive,
+  guarding on the held fd first — flock is per open file description, so re-opening a file this process
+  already locked conflicts with itself. Nothing on disk distinguishes a live socket from a
+  force-quit leftover, and unlinking a live one strands its owner: it keeps its listening fd, never
+  learns, and only a restart recovers it. Do NOT probe with `connect` instead — on Darwin a live listener
+  whose backlog is full refuses with the same `ECONNREFUSED` a socket nobody listens on returns, so one
+  stalled client parking the serial accept loop would make a running instance read as stale. `flock` is
+  also atomic against two instances launching together, and the kernel drops it on a force-quit, which is
+  the case the unlink covers. Never unlink the lock file: the next instance would lock a fresh inode and
+  exclude nobody.
+- A refused instance advertises `<socketPath>.unavailable` through `resolvedSocketPath`, so its shells and
+  `{AGT_SOCKET}` carry a path nothing serves instead of the resolved default, which would point them at
+  the other instance — the user's live terminal, where shared state makes persisted session ids resolve
+  too. Do NOT omit the variable instead: `agterm-agent-status.sh` drops `--socket` when it is absent and
+  `agtermctl` then resolves that same default, so an unset value routes agent status onto the live app.
+  `refused` clears on a later successful acquire, since `start()` re-runs per window scene and the owner
+  may have quit. Its `stop()` returns early without unlinking, leaving the owner's socket intact.
 - One newline-delimited JSON request and response uses each connection, capped at 1 MiB. Unknown commands
   return structured errors. Mutations may return `result.id`; trees use `result.tree`.
 - Human output shows IDs only for created session/workspace/window, retains them in JSON, uses
@@ -124,7 +148,10 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   first, then the selected session's, then `workspaces.last` — so repeated moves may target a different
   workspace; use an ID to keep one target.
 - `session.split` drives the addressed session, not active-only `AppActions.toggleSplit`. Off hides and
-  retains the shell; only shell exit tears it down.
+  retains the shell; only shell exit tears it down. `split` reports SHOWN, so a hidden split reads false;
+  `hasSplit` reports the pane existing at all and is present exactly when `splitRatio`/`splitFocused`
+  can be. Callers asking "does this session have a split" read `hasSplit`, and `agtermctl tree` tags the
+  hidden case `(split hidden)`.
 - `session.scratch` is a third, nonpersisted login shell with on/off/toggle. It spawns lazily, survives
   hiding, recreates after exit, and renders as a full translucent cover below overlay. It has no session
   PWD/title link but a weak watermark link. GUI surfaces are Command-J, titlebar, View, and palette.
@@ -197,6 +224,10 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   scratch addresses that pane, including hidden scratch. Default reads viewport; `--all` includes
   scrollback; `--lines N` returns last content lines after trimming blank grid rows. All and lines are
   exclusive; N must be positive and dispatcher-validated. Blank returns empty success; API failure errors.
+  An UNREALIZED pane answers `session not realized`, not `failed to read surface buffer`, whether its slot
+  is empty or holds a view whose libghostty surface never came up — one state to a caller, and the reading
+  never happened. `failed to read surface buffer` is left to a real read failure on a realized surface.
+  `quick.text` keeps its own vocabulary and still reports that string for an unrealized quick surface.
   Output is plain text because pinned Ghostty exposes no styled-cell read.
 - `session.search` selects and realizes the target, then searches its focused surface. Text opens/updates;
   to next/prev navigates; close ends; no arguments opens empty UI. Poll async SEARCH_TOTAL and return count
@@ -267,8 +298,17 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   override at all. Every HUD WIDTH passes `HudLayout.clampSizePercent` (10...80), the caller's included, so
   `--full`'s refusal and the never-cover invariant cannot disagree. The height is capped at the same 80 but
   takes NO minimum floor: the box already carries `verticalPadding`, and flooring it is the square again.
-  The 80 cap is also what makes `top`/`bottom` always fit their edge margin, the height being what decides
-  how far the panel travels; `OverlayPanelStyle.verticalOffset`'s centering fallback is defensive only.
+  The 80 cap is also what makes an edge anchor always fit its margin on EITHER axis, each axis' own extent
+  being what decides how far the panel travels there; the centering fallback in `OverlayPanelStyle`'s two
+  offsets is defensive only.
+- `HudPosition` is the nine anchors of a 3x3 grid, spelled exactly as `BackgroundWatermark.Position` so
+  `--position` means one thing across `session.background` and `session.hud`. The bare `top`/`bottom` it
+  shipped with stay ACCEPTED as aliases for the middle column, and `HudPosition.parse` is the one entry
+  point that resolves them — dispatcher, CLI validation and `init(from:)` all take it, so no path accepts a
+  name another rejects. They NORMALIZE: the read-back reports the canonical anchor, which is what makes them
+  aliases rather than a second vocabulary. Rejections and CLI help list `acceptedNamesList`, never the
+  canonical set alone, for the same reason `HudSpinner` lists `none`. `verticalBand`/`horizontalBand` split
+  an anchor into its row and column so `OverlayPanelStyle` runs one offset over each axis.
 - An unmeasured pane splits the fallback: width takes `maxSizePercent` (nothing is known to fit), height
   takes `minSizePercent` (80% of a pane is a cover, not a message). `OverlayPanelStyle` falls back the same
   way for a HUD whose height has not been measured yet.
@@ -281,8 +321,16 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   nothing and the dispatcher validates one thing. `noneName` is ACCEPTED by both, not just the socket —
   refusing it in the CLI would fail a value `tree` had just handed the caller — and beats a bare
   `--spinner` beside it. Rejection messages list it through `acceptedNamesList`, never the styles alone.
+- The panel's two colors are owned by different layers, which is why only one is updatable:
+  `backgroundColor` is a per-surface config the factory reads ONCE at creation, `textColor` rides the body
+  file's header as SGR PARAMETERS the helper re-reads every tick. So `hud.update` recolors text in place and
+  cannot touch the backing, and the CLI's `update` takes `--text-color` but no `--background-color`.
+  `HudLayout.foregroundSGR` owns the encoding, host-free, and resolves a malformed hex to the
+  `noTextColor` sentinel rather than a partial run; the helper converts nothing and wraps only digits and
+  semicolons, so a malformed header cannot emit an arbitrary escape into the pane.
 - Read back `ControlSessionNode.hud` with BOTH shares, `sizePercent` and `heightPercent`, `overlay` false
-  and `overlaySizePercent` omitted beside it;
+  and `overlaySizePercent` omitted beside it, plus `textColor` (omitted when the panel keeps the terminal
+  foreground, and tracking the LATEST update unlike `backgroundColor`);
   `position` and `spinner` always report the effective value, defaults included — `spinner` names the STYLE
   and spells a static panel `HudSpinner.noneName`, which the dispatcher accepts back as "no spinner" so a
   caller can round-trip what `tree` gave it. HUD state is poll-only.
@@ -290,9 +338,11 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
 - The panel is a pty running bundled `Resources/hud/hud.sh`, spawned `autoFocus: false` with
   `AGTERM_HUD_FILE` as its only HUD-SPECIFIC variable (the surface still inherits the session environment
   and the overlay wrapper's `AGTERM_OVL_*` pair) and capturing no exit code. Grid, spinner (flag, interval
-  and frames) and the APP'S PID
+  and frames), text color and the APP'S PID
   ride the body file's HEADER line and are re-read every tick, so `hud.update` repaints in place with no
-  respawn; write that file atomically. It is per SESSION, so an update rewrites the path the running helper
+  respawn; write that file atomically. The frames are LAST because they alone are variable-length and the
+  helper shifts the fixed fields off to reach them, so a new fixed field goes before them and owes the
+  helper a matching shift count. It is per SESSION, so an update rewrites the path the running helper
   already opened. `Session.discardHudBody` is the only deleter and every store teardown runs it — close,
   ⌘W, session/workspace/window teardown — so a HUD closed before its surface realized cannot strand the
   message text in `/tmp`. An update carries the OPEN's background color forward, the factory reading it once
@@ -396,7 +446,12 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
 
 - `keymap.reload` shares GUI reload and returns diagnostic count. `keymap.list` reports:
   resolved built-in actions and override state; live AppKit menu equivalents/menu/title/selector; path;
-  custom commands; diagnostics. The two chord sets may differ during deferred rebuild or collision.
+  custom commands; diagnostics. An action's `chord` is the menu key equivalent alone, so it keeps comparing
+  against `menu`, while `alternates` holds its monitor-bound binds in kitty syntax and is omitted when
+  empty; the human actions column joins the whole set with `|`. Both halves are canonical kitty syntax, not
+  the file's own spelling — only a custom command's `shortcut` is preserved verbatim. `overridden` compares
+  the MENU chord alone, so an action bound only by alternatives reports no override.
+  The two chord sets may differ during deferred rebuild or collision.
   Host-free projection names arrow/return; represent AppKit globe as `fn+` even though grammar lacks it.
 - `config.reload` shares GUI/Edit-overlay reload and returns Ghostty diagnostic count. Keymap and config are
   app-global and take no window.
@@ -428,7 +483,15 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
 ## Tree and window read-back
 
 - Session nodes include foreground/split foreground argv, background spec, overlay size, pane overlays,
-  split ratio, split focus, status fields, flag, unseen, restore pins, and surfaces. Foreground shares the
+  split ratio, split focus, status fields, flag, unseen, restore pins, surfaces, and `realized`.
+- `realized` reports the MAIN pane's `TerminalSurface.isRealized`, populated host-free in
+  `AppStore.controlTree` (no app closure — `isRealized` is on the protocol) and false for an empty slot, so
+  only a server predating the field omits it. It exists because `session.new` answers `ok` for a model
+  insert while libghostty refuses to create a surface with the display asleep, leaving a scheduled job's
+  session unrealized until the displays wake (#416). It is the main pane because that is what `--command`
+  spawns on and what `session.type`/`session.text` address by default; per-pane liveness stays with the
+  `fontSize`/`splitFontSize`/`scratchFontSize` triple, so do not add a second per-pane spelling.
+  `agtermctl tree` tags the row `(not realized)`, beside `(split hidden)`. Foreground shares the
   restore capture's pid/sysctl/host-free extraction but adds one step the capture must never take.
   libghostty's foreground pid is `tcgetpgrp`, a process GROUP id, and a pane with no job-control shell
   leaves its program in the group led by setuid-root `login`, whose argv `KERN_PROCARGS2` refuses. The tree

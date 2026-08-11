@@ -103,7 +103,17 @@ SIGTERM use normal process behavior.
 `agtermctl tree [--json] [--window W]` — the workspace/session tree. Each session node:
 `id`, `name`, `cwd`, `title` (the raw OSC terminal title — e.g. a remote host over SSH — omitted
 when none reported; distinct from `name`, the derived sidebar label), `active` (selected),
-`split` (split shown), `splitRatio` (the left-pane fraction 0.05–0.95 of a session that HAS a split —
+`split` (split SHOWN side by side, the read side of `session split on|off`),
+`realized` (whether the session's MAIN pane has a live terminal — `false` means no shell was spawned, a
+`--command` has not run, and `session type`/`session text` will answer `session not realized`. `session
+new` returns `ok` for a session that exists in the model, which is not the same thing: libghostty refuses
+to create a surface while the DISPLAY is asleep, so a session a scheduled job creates overnight stays
+unrealized until the displays wake, at which point it recovers on its own. Poll this after creating a
+session unattended; `agtermctl tree` also tags the row `(not realized)`),
+`hasSplit` (whether a second pane exists at all, shown or hidden with ⌘D; omitted when there is none —
+read THIS to decide whether a session has a split, because a hidden split reports `split: false` while
+its pane stays alive, and it is present exactly when `splitRatio`/`splitFocused` can be),
+`splitRatio` (the left-pane fraction 0.05–0.95 of a session that HAS a split —
 shown or hidden; omitted when there's no split or the ratio was never explicitly set (divider at the
 default 0.5) — the read side
 of `session resize`, record it to restore the exact divider position),
@@ -121,14 +131,18 @@ to restore the exact size),
 `["left","right"]`, omitted when neither is; the read side of `session overlay open --pane`, reported
 independently of the session-wide `overlay` flag, which a pane overlay never sets),
 `hud` (the message panel occupying the session-wide overlay slot — the read side of `session hud`; omitted
-when none is up. A `{message, detail?, spinner, backgroundColor?, sizePercent?, heightPercent?, position}`
-object: `detail` and `backgroundColor` are omitted when the caller set none, `sizePercent` is the EFFECTIVE
+when none is up. A
+`{message, detail?, spinner, backgroundColor?, textColor?, sizePercent?, heightPercent?, position}`
+object: `detail`, `backgroundColor` and `textColor` are omitted when the caller set none, `sizePercent` is the EFFECTIVE
 10–80 share of the pane's WIDTH the panel takes (the app's measurement of the message, or the caller's
 `--size-percent` override, either way bounded so a message never covers the session; always present for a
 live HUD), `heightPercent` is the effective share of its HEIGHT, always measured from the message's rows
 and never set by a caller, and `position` and `spinner`
 always report the effective value, `center` and a static panel's `none` included, so a caller who omitted
-them never has to know the defaults. `spinner` names the STYLE, a string, so a static panel reads back as
+them never has to know the defaults. `position` always names one of the nine CANONICAL anchors, so a caller
+who sent the `top`/`bottom` alias reads `top-center`/`bottom-center` back. The two colors differ in
+lifetime: `backgroundColor` is what the panel was CREATED with and survives every update, while `textColor`
+tracks the latest update. `spinner` names the STYLE, a string, so a static panel reads back as
 `"none"` rather than `false`. `hud` and `overlay` are mutually exclusive — one slot — and a HUD reports `overlay`
 FALSE with `overlaySizePercent` omitted, so a poll for "is a program covering this session" cannot mistake
 a message for one. No event announces a HUD; poll `tree` for it),
@@ -591,7 +605,7 @@ All twelve are read-only projections of GUI state.
   not a caller's program, so there is no status to report and the session-wide arm errors
   `no overlay result: the slot holds a hud`; the `--pane` arm is unaffected, since a HUD only ever takes
   the session-wide slot.
-- `session hud [open] <message> [--detail T] [--spinner] [--spinner-style S] [--position top|center|bottom] [--background-color #rrggbb] [--size-percent N] [--target] [--window W]`
+- `session hud [open] <message> [--detail T] [--spinner] [--spinner-style S] [--position P] [--background-color #rrggbb] [--text-color #rrggbb] [--size-percent N] [--target] [--window W]`
   — post a PASSIVE message panel over the session and return its id. It occupies the same session-wide slot
   as `session overlay open`, but carries a message rather than a program: it takes no input, the session
   keeps first responder and stays typable, and the terminal behind it is neither dimmed nor click-blocked.
@@ -603,29 +617,38 @@ All twelve are read-only projections of GUI state.
   another from `bar|braille|circle|blocks|dot` and turns the spinner on by itself — `dot` blinks rather than
   animating, for a panel that sits up for minutes. `--spinner-style none` is accepted too and leaves the
   panel static, so the `none` a read-back reports can be echoed straight back; an unknown name is refused
-  `invalid spinner: <value> (bar|braille|circle|blocks|dot|none)`. `--position` places the panel vertically (default
-  `center`; `top` and `bottom` hold a fixed margin off the pane edge, so a panel at the largest allowed
-  size never overhangs). The panel is measured from the message against the session's terminal font on BOTH
+  `invalid spinner: <value> (bar|braille|circle|blocks|dot|none)`. `--position` anchors the panel to one of
+  the nine `top-left|top-center|top-right|center-left|center|center-right|bottom-left|bottom-center|bottom-right`
+  (default `center`), the same anchors `session background` takes; every anchor off center holds a fixed
+  margin off that pane edge on each axis it names, so a panel at the largest allowed size never overhangs.
+  A corner is what keeps a long-lived panel out of the text the user is reading. The bare `top`/`bottom`
+  this argument shipped with are still accepted for `top-center`/`bottom-center`, and `hud.position` reports
+  the canonical anchor whichever spelling was sent. The panel is measured from the message against the session's terminal font on BOTH
   axes separately — width from the longest wrapped line, height from the number of them — so a title and a
   subtitle give a wide, short panel rather than a square one. `--size-percent N` (1–100) overrides the WIDTH
   only; the height always follows the message, since a caller-set height could only strand it in an empty
   box. The effective width is bounded to 10–80% of the pane, the same invariant that makes
   `session overlay resize --full` a refusal, so a requested 100 reads back as 80. Both effective shares read
   back, as `hud.sizePercent` and `hud.heightPercent`. `--background-color #rrggbb` gives the panel its own solid
-  background, read once when the panel is created. Message and detail are capped at 256 characters and
+  background, read once when the panel is created; `--text-color #rrggbb` colors the TEXT and, unlike the
+  background, rides the panel's body file, so an update can change it. Both read back, as
+  `hud.backgroundColor` and `hud.textColor`. Message and detail are capped at 256 characters and
   reject control characters — newline included, since the panel prints straight into a live terminal and
   `--detail` is the second line on offer. Errors `session.hud.open requires a message` on a missing or
   empty message, `hud text must not contain control characters`, `hud message too long (max 256
   characters)` / `hud detail too long (max 256 characters)`, `invalid color: <value> (#rrggbb)`,
-  `invalid position: <value> (top|center|bottom)`, `invalid spinner: <value> (bar|braille|circle|blocks|dot|none)`,
+  `invalid text color: <value> (#rrggbb)`,
+  `invalid position: <value> (top-left|top-center|top-right|center-left|center|center-right|bottom-left|bottom-center|bottom-right|top|bottom)`,
+  `invalid spinner: <value> (bar|braille|circle|blocks|dot|none)`,
   and `session.hud.open: --size-percent must be 1...100`.
   A second `hud` replaces the first; a `session overlay open` replaces a HUD, while a HUD over a RUNNING
   program is refused with `overlay already open` — a message is replaceable, a program is not.
-- `session hud update <message> [--detail T] [--spinner] [--spinner-style S] [--position P] [--size-percent N] [--target] [--window W]`
+- `session hud update <message> [--detail T] [--spinner] [--spinner-style S] [--position P] [--text-color #rrggbb] [--size-percent N] [--target] [--window W]`
   — repaint the live panel in place: no re-spawn, no blink, the panel does not flicker. It REPLACES the
-  whole spec rather than patching it, so `--detail`, the spinner, and `--position` must be repeated to
-  survive and an omitted one drops. `--spinner-style` may name a DIFFERENT style than the panel opened
-  with; the frames ride the message file, so the look changes on the next tick with no re-spawn. Same required message and same rejections as `open`. There is no
+  whole spec rather than patching it, so `--detail`, the spinner, `--position` and `--text-color` must be
+  repeated to survive and an omitted one drops. `--spinner-style` may name a DIFFERENT style than the panel
+  opened with, and `--text-color` a different color; both ride the message file, so the look changes on the
+  next tick with no re-spawn. Same required message and same rejections as `open`. There is no
   `--background-color`: the surface reads that once at creation, so only a fresh `session hud` can change
   it, and `tree` keeps reporting the creation color across updates. Errors `no hud` when none is up.
 - `session hud close [--target] [--window W]` — take the panel down and delete its message file. Errors
@@ -688,7 +711,7 @@ shell (no controlling terminal — `/dev/tty` errors). See examples.md for usage
   control-native, but `zoom` mirrors a GUI action.
 - `window fullscreen <id>` — toggle NATIVE macOS full screen (a separate Space, auto-hidden menu bar),
   via `NSWindow.toggleFullScreen`. A second call exits. The window must be open. This is the control half
-  of the View ▸ Toggle Full Screen menu item (⌃⌘F, rebindable as `toggle_fullscreen`) and the green
+  of ⌃⌘F (rebindable as `toggle_fullscreen`), View ▸ Enter/Exit Full Screen, and the green
   traffic-light button — distinct from `zoom`, which only maximizes the frame in the same Space.
 - `window minimize <id> [on|off|toggle]` — minimize the window to the Dock, or restore it, via
   `NSWindow.miniaturize`/`deminiaturize`. The mode resolves against the window's current state, so `on` and
@@ -934,11 +957,13 @@ parse diagnostics (0 = clean). App-global (no `--window`).
 `result.keymap`:
 
 - `path` — the `keymap.conf` this came from.
-- `actions[]` — every rebindable built-in: `action` (its `keymap.conf` name), `chord` (the resolved
-  chord in the same kitty syntax the file uses, omitted when the action is keyless), and
-  `overridden: true` when a `map` line moved it off its shipped default. Every action is listed, bound
-  or not, so you can also see which chords are free.
-- `commands[]` — the custom commands: `name`, and `shortcut` omitted for a palette-only one.
+- `actions[]` — every rebindable built-in: `action` (its `keymap.conf` name), `chord` (the resolved menu
+  chord in the same kitty syntax the file uses, omitted when the action is keyless or a `map` line left it
+  with no menu chord), `alternates[]` (its other binds, the ones a key monitor delivers, omitted when it
+  has none), and `overridden: true` when a `map` line moved it off its shipped default. Every action is
+  listed, bound or not, so you can also see which chords are free.
+- `commands[]` — the custom commands: `name`, and `shortcut` omitted for a palette-only one. A shortcut
+  holding alternatives is one `|`-joined string, in the file's own spelling.
 - `diagnostics[]` — `line` + `message` per parse problem (`keymap.reload` returns only the count).
 - `menu[]` — the key equivalents the menu bar carries: `chord`, the owning `menu`, the item `title`, its
   `selector`, and `enabled: false` when the item is disabled. agterm's own items report `menuAction:`;
@@ -953,9 +978,11 @@ end up holding a chord an action claims. If a keybinding "does not work" while `
 compare the two lists: find the action's `chord`, then look for that chord in `menu` and check which
 item carries it.
 
-One built-in is legitimately absent from `menu`: `undo_close` (⌘Z by default) is delivered by a key
-monitor, not a menu item, so native text undo keeps working in the rename, palette and Settings fields.
-Its missing menu entry is expected and not a fault.
+Two built-ins are legitimately absent from `menu`, both delivered by a key monitor rather than a menu
+item: `undo_close` (⌘Z by default), so native text undo keeps working in the rename, palette and Settings
+fields, and `toggle_fullscreen` (⌃⌘F by default), because agterm ships no full screen menu item — macOS
+adds its own, carrying `fn+f`. Their missing menu entries are expected and not a fault. So is an
+`alternates` entry: only an action's `chord` can reach the menu bar.
 
 Menu chords use the same vocabulary as the file (`cmd+opt+up`, `cmd+shift+return`), so the two lists
 compare as plain strings. One exception: the globe/fn modifier prints as `fn+`, which no `keymap.conf`
@@ -966,11 +993,22 @@ line can express — such an item is AppKit's own and never matches an action.
 The file lives at `<config dir>/keymap.conf` (default `~/.config/agterm`; the dir is set in Settings ▸
 Key Mapping). Two verbs, line-based; blank lines and `#` comments ignored:
 
-- `map <chord> <action>` — rebind a built-in menu action to a single chord (no leaders for built-ins).
+- `map <chord> <action>` — rebind a built-in menu action.
 - `command "<name>" [chord] <shell...>` — define a custom shell command, listed in the action palette
   marked `custom`. The quoted name may contain spaces. The post-name token is the chord only if it
   parses AND carries a modifier (a bare modifier-less key is rejected). A custom chord may be a leader
   sequence (chords joined by `>`, e.g. `ctrl+a>g`). No chord → palette-only.
+
+Either verb's chord token may hold **alternatives** joined by `|`, with no spaces around it (everything
+after the first token is the shell line): `map cmd+t|ctrl+space>s toggle_split` fires the action from
+either. A built-in's first single-chord alternative the menu can carry becomes its menu shortcut (one that
+names a reserved chord or a bare arrow is diagnosed and dropped, and the next single chord takes the slot);
+every other alternative, and every alternative of a `command`, is delivered by a key monitor and so must
+carry a modifier on its first chord. A `map` line with no single-chord alternative
+(`map ctrl+a>s toggle_split`) leaves the action with NO menu shortcut — its shipped default is gone, not
+kept. A malformed alternative rejects the whole line; one that merely breaks a rule or collides with
+another binding drops by itself and its siblings keep working. A line left binding nothing at all leaves
+the action on the shortcut it shipped with.
 
 A **chord** is modifier words joined by `+` then a base key: modifiers `ctrl`, `cmd`, `opt`, `shift`;
 base key is a single character or `tab`/`space`/`return`/`delete`/`left`/`right`/`up`/`down`. A key typed
@@ -1085,8 +1123,11 @@ here is app-global and touches only the captured commands, not those overrides.
 `hud message too long (max 256 characters)` / `hud detail too long (max 256 characters)` /
 `session.hud.open: --size-percent must be 1...100` /
 `hud helper is not bundled in this build` / `could not write the hud message` /
-`invalid position: <value> (top|center|bottom)` (session hud over the raw socket; the `agtermctl` CLI
-rejects the same value locally with `position must be one of: top, center, bottom`),
+`invalid position: <value> (top-left|top-center|top-right|center-left|center|center-right|bottom-left|bottom-center|bottom-right|top|bottom)`
+(session hud over the raw socket; the `agtermctl` CLI rejects the same value locally with
+`position must be one of: top-left, top-center, top-right, center-left, center, center-right, bottom-left, bottom-center, bottom-right, top, bottom`),
+`invalid text color: <value> (#rrggbb)` (session hud; the CLI rejects it locally with
+`text-color must be a #rrggbb hex value`),
 `invalid spinner: <value> (bar|braille|circle|blocks|dot|none)` (same split: the CLI rejects it locally with
 `spinner style must be one of: bar, braille, circle, blocks, dot, none`),
 `invalid flag mode` (session flag),

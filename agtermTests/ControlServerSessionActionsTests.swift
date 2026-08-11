@@ -111,6 +111,25 @@ final class ControlServerSessionActionsTests: XCTestCase {
         XCTAssertEqual(store.selectedSessionID, other.id, "typing without select must leave the selection where it was")
     }
 
+    // a pane parked in the slot with no libghostty surface is the state a display-asleep create leaves
+    // behind (#416). It used to answer `failed to read surface buffer`, naming a cause that never happened,
+    // while every sibling command called the same state `session not realized`.
+    func testTextOnAnUnrealizedPaneReportsNotRealizedRatherThanAReadFailure() throws {
+        let store = try XCTUnwrap(library.activeStore)
+        let owner = try XCTUnwrap(store.currentWorkspaceID)
+        let target = try XCTUnwrap(store.addSession(toWorkspace: owner, cwd: NSHomeDirectory()))
+        let parked = GhosttySurfaceView(workingDirectory: NSTemporaryDirectory())
+        target.surface = parked
+        XCTAssertFalse(parked.isRealized, "a detached view never runs createSurface, which is the point here")
+
+        let response = server.readSessionText(target.id.uuidString, window: nil,
+                                              options: ControlSessionTextOptions(pane: nil, all: false, lines: nil))
+
+        XCTAssertFalse(response.ok)
+        XCTAssertEqual(response.error, "session not realized",
+                       "an empty slot and a parked-but-unrealized view are one state to a caller")
+    }
+
     // the true side of that branch: deleting the body of `if select` leaves every other test green while
     // `--select` silently stops selecting, so this asserts the move itself rather than the typed text.
     func testTypeWithSelectStillSelectsWhenTheSurfaceIsNotReady() async throws {
@@ -316,10 +335,28 @@ final class ControlServerSessionActionsTests: XCTestCase {
         XCTAssertEqual(session.hudFile, file)
         XCTAssertEqual(bodyText(session), expectedBody(update))
         XCTAssertEqual(session.overlaySizePercent, 40)
-        // the grid rides in the body's header line, which is what lets a running helper re-centre
+        // the grid rides in the body's header line, which is what lets a running helper re-centre. The
+        // trailing `-` is the no-text-color sentinel, spelled out because this pins the wire format.
         XCTAssertEqual(bodyText(session)?.split(separator: "\n").first.map(String.init),
                        "\(HudLayout.box(for: update).columns) \(HudLayout.box(for: update).rows) 0 "
-                           + "\(Self.ownerPid) \(HudSpinner.staticInterval)")
+                           + "\(Self.ownerPid) \(HudSpinner.staticInterval) -")
+    }
+
+    // the text color rides that same header, so an update recolors the live panel without re-opening the
+    // slot — the half of a HUD's color an update can change, unlike the surface-read background.
+    func testHudUpdateRecolorsTheTextThroughTheHeaderInPlace() throws {
+        let (_, session) = try makeHudSession()
+        XCTAssertTrue(server.openHud(session.id.uuidString, window: nil,
+                                     spec: HudSpec(message: "first", textColor: "#e0e0e0")).ok)
+        let generation = session.overlaySlotGeneration
+
+        let update = HudSpec(message: "second", textColor: "#7ec07e")
+        XCTAssertTrue(server.updateHud(session.id.uuidString, window: nil, spec: update).ok)
+
+        XCTAssertEqual(session.overlaySlotGeneration, generation, "a recolor must not re-open the slot")
+        XCTAssertEqual(bodyText(session)?.split(separator: "\n").first.map(String.init)?
+            .hasSuffix(" 38;2;126;192;126"), true)
+        XCTAssertEqual(session.hudSpec?.textColor, "#7ec07e")
     }
 
     func testHudCloseClearsTheSlotAndRemovesTheBodyFile() throws {

@@ -35,6 +35,10 @@ session drag are out of scope.
 - A window is open when its store is loaded. `loadStore` lazily caches `windows/<id>.json`; `newWindow`
   seeds workspace 1 and a `$HOME` session. Keep at least one library entry. `openIDs` drives relaunch.
   `applyInactiveWindowSidebarHiding` shows the active sidebar and hides other windows' sidebars.
+- `closeWindow` that empties the open set pins `frontmostWindowID` to the closing window.
+  The persisted index then has no open entries, so the next launch takes reopen's never-windowless
+  fallback — the pin makes it reopen the exit window (whose captured commands were just persisted),
+  not `windows.first`.
 - State lives under `AGTERM_STATE_DIR` or Application Support: `windows.json` plus
   `windows/<uuid>.json`. Legacy `workspaces.json` remains dormant after migration. `PersistenceStore.fileName`
   defaults to `workspaces.json`; index and window mutations save only their own files.
@@ -54,6 +58,8 @@ session drag are out of scope.
   availability conditionals without an `AnyScene` eraser. Deduplicate by ID on both systems.
 - `TitleProbeView` sets `frameAutosaveName("agterm-window-<id>")`, reports key/main changes, and on close
   tears down surfaces before `closeWindow`.
+  An app-exit close captures foreground commands first, while those surfaces are still alive; see
+  [[settings]] for that contract.
 - `AppActions`, commands, palette construction, `ControlServer`, `SettingsModel`, and `SessionSwitcher`
   resolve through observable `WindowLibrary.activeStore`: frontmost open store, then first open store.
 - On termination, set `isTerminating` before windows close, then `saveAllOpen` and `saveIndex`. This preserves
@@ -92,12 +98,24 @@ session drag are out of scope.
   `AppleActionOnDoubleClick`: Zoom/Fill zooms, Minimize miniaturizes, Do Nothing does nothing, and an absent
   key defaults to Zoom. `AGTERM_UITEST_DOUBLECLICK_ACTION` overrides via environment because launch
   arguments hit FB11763863. Decorative titlebar regions disable hit testing; buttons remain above them.
-- `window.fullscreen` uses `toggleFullScreen`, a distinct native Space. GUI surfaces are View > Toggle Full
-  Screen, palette, `BuiltinAction.toggleFullscreen` with Ctrl-Command-F, and the green button. Control
-  resolves an open ID; read back the `.fullScreen` style mask.
-- AppKit reinjects its own `toggleFullScreen:` menu item whenever View opens. Remove only that selector at
-  launch and every `NSMenu.didBeginTrackingNotification`; do not install a menu delegate that would replace
-  SwiftUI updates. `testViewMenuHasSingleFullScreenItem` pins this.
+- `window.fullscreen` uses `toggleFullScreen`, a distinct native Space. GUI surfaces are the palette,
+  `BuiltinAction.toggleFullscreen` with Ctrl-Command-F through the key monitor, AppKit's own injected
+  View menu item, and the green button. Control resolves an open ID; read back the `.fullScreen` style mask.
+- agterm ships NO full screen menu item. AppKit appends its own "Enter Full Screen" (`toggleFullScreen:`,
+  Globe+F) to the View menu as it is prepared for display, so any item of agterm's own is a visible
+  duplicate. All of these were measured and none suppresses it: removing the injected item on
+  `NSMenu.didBeginTrackingNotification` (posted once per ROOT tracking session, before the injection);
+  removing it deferred one runloop turn (too late — the displayed menu is already snapshotted, so the model
+  loses the item while the duplicate stays on screen); registering `NSFullScreenMenuItemEverywhere` false,
+  which macOS 26 ignores; and giving agterm's own item the `toggleFullScreen:` selector, which AppKit
+  injects past anyway. Do not install a menu delegate, which would replace SwiftUI updates.
+- `toggle_fullscreen` therefore has no menu item to carry its equivalent, and is matched in
+  `CustomCommandRunner`'s key monitor instead — the one built-in that does not ride a SwiftUI shortcut.
+  A half-typed leader sequence still wins. The menu affordance and Globe+F are AppKit's item.
+- `testViewMenuHasSingleFullScreenItem` asserts the item COUNT and matches on TITLE. Matching by
+  identifier silently fails to find the injected item, which is why the assertion it replaced passed for
+  months while the duplicate was on screen. Never trust the AX tree alone here: it reflects the menu model,
+  which a removal can change without changing the pixels. Verify a menu fix by opening the menu and looking.
 - `window.minimize` accepts `on`, `off`, or `toggle` through `ControlToggleMode`, defaulting to toggle.
   Deterministic modes support park-all-but-one. GUI Command-M, yellow button, and titlebar preference use
   AppKit directly, so observe `didMiniaturize`/`didDeminiaturize` to keep control read-back current.

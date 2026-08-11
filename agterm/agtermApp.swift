@@ -20,6 +20,7 @@ struct agtermApp: App {
     @State private var customCommandRunner: CustomCommandRunner
     @State private var appearanceObserver: SystemAppearanceObserver
     @State private var accessibilityObserver: SystemAccessibilityObserver
+    @State private var wakeObserver: SystemWakeObserver
 
     /// Whether this launch owes the user the first-run welcome. Decided in `init()`, because the first
     /// launch writes its own window snapshot moments after the scene appears and that write would read back
@@ -61,15 +62,19 @@ struct agtermApp: App {
         _sessionSwitcher = State(initialValue: SessionSwitcher(library: library, canSwitch: { actions.uiActionsEnabled }))
         _paneShortcuts = State(initialValue: PaneShortcuts(library: library, actions: actions))
         _undoCloseShortcut = State(initialValue: UndoCloseShortcut(actions: actions))
-        // built last: needs the keymap (settings) and the control server's bound socket path for `{AGT_SOCKET}`.
+        // built last: needs the keymap (settings), the action hub for built-in monitor binds, and the control
+        // server's bound socket path for `{AGT_SOCKET}`.
         _customCommandRunner = State(initialValue: CustomCommandRunner(
-            library: library, settings: settingsModel,
+            library: library, settings: settingsModel, actions: actions,
             socketProvider: { controlServer.resolvedSocketPath }))
         // follows macOS light/dark via KVO on NSApp.effectiveAppearance; dependency-free, started in `.task`.
         _appearanceObserver = State(initialValue: SystemAppearanceObserver())
         // follows Reduce Motion / Reduce Transparency via NSWorkspace's accessibility-display notification,
         // fanning live changes to AppKit consumers; SwiftUI ones use Environment.
         _accessibilityObserver = State(initialValue: SystemAccessibilityObserver())
+        // re-attempts surface creation on display wake: libghostty refuses to create one while the display
+        // sleeps, which leaves a scheduled job's session realized-never and its --command unrun (#416).
+        _wakeObserver = State(initialValue: SystemWakeObserver())
     }
 
     var body: some Scene {
@@ -175,6 +180,7 @@ struct agtermApp: App {
                         appearanceObserver.start()
                         // consumers read current accessibility values at first render; this handles live flips.
                         accessibilityObserver.start()
+                        wakeObserver.start()
                         // last: a modal here blocks the rest of the task, and the window behind it should be
                         // fully wired before it opens. `presentOnce` latches, so the per-window .task is safe.
                         if welcomeDue { WelcomeAlert.presentOnce(settingsModel: settingsModel) }
@@ -222,9 +228,9 @@ struct agtermApp: App {
         // captured foreground preempts `initialCommand` even when denylist-suppressed. A `session.restore` override
         // beats both, from the TRANSIENT pending slot (only an app-bootstrap restore seeds it) not the sticky
         // persisted field; taking it clears it, so this pane's next surface is a plain shell.
-        let hadForeground = session.foregroundCommand != nil
-        let restoreInput = Self.restoreInitialInput(session.foregroundCommand)
-        session.foregroundCommand = nil
+        let pendingForeground = session.takePendingForegroundCommand(pane: .left)
+        let hadForeground = pendingForeground != nil
+        let restoreInput = Self.restoreInitialInput(pendingForeground)
         let inputs = CommandRestore.RestoreInputs(wasRestored: session.wasRestored,
                                                   restoreEnabled: GhosttyApp.shared.restoreRunningCommand,
                                                   hadForeground: hadForeground, foregroundInput: restoreInput,
@@ -380,8 +386,7 @@ struct agtermApp: App {
         // `restorePlan` — `restoreInput` alone decides. A `session.restore` override wins over the capture, from
         // the TRANSIENT pending slot (seeded only by an app-bootstrap restore whose split was shown) not the
         // sticky persisted field; taking it clears it, so a fresh ⌘D split after a split shell exits is a shell.
-        let capturedInput = Self.restoreInitialInput(session.splitForegroundCommand)
-        session.splitForegroundCommand = nil
+        let capturedInput = Self.restoreInitialInput(session.takePendingForegroundCommand(pane: .right))
         let restoreInput = CommandRestore.restoreInput(restoreEnabled: GhosttyApp.shared.restoreRunningCommand,
                                                        restoreOverride: session.takePendingRestoreOverride(pane: .right),
                                                        capturedInput: capturedInput)
@@ -533,7 +538,8 @@ struct agtermApp: App {
     /// session facts plus agterm's identity (`TERM_PROGRAM`/`TERM_PROGRAM_VERSION`). The window id comes from the
     /// open store owning the session (split/overlay/scratch inherit it), the workspace from the session's owner.
     /// `AGTERM_SOCKET` is the path `ControlServer` will bind, resolved at init so a launch-window shell
-    /// materializing before `start()` still sees it, honoring a test's `AGTERM_CONTROL_SOCKET` override. `pane`
+    /// materializing before `start()` still sees it, honoring a test's `AGTERM_CONTROL_SOCKET` override, and
+    /// replaced by an unbindable path when this instance refused it to another live one. `pane`
     /// injects `AGTERM_PANE` (`left`=main, `right`=split, `scratch`) so the hook wrapper forwards `--pane` and a
     /// background-pane status records which surface blocked; the overlay passes nil.
     @MainActor

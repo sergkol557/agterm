@@ -90,6 +90,18 @@ concurrency before changing the bridge.
 - `make deploy` copies Release to `~/Applications`, whose app, PATH CLI, and installed hooks shadow Debug.
   Test fresh CLI/hooks with the Debug binary or redeploy and reinstall them. Debug uses
   `com.umputun.agterm.debug`, distinct from Release, but state/socket paths still require isolation.
+- Launching a second instance without `AGTERM_STATE_DIR` still shares state, but no longer takes the
+  running app's control socket. `ControlServer.init` takes an exclusive `flock` on `<socket>.lock` and
+  `start` refuses to bind while another live instance holds it, logging `already served by another
+  instance`. Ownership is settled at init so the launch window's first shell, whose environment is
+  snapshotted before `start` runs, cannot bake the owner's path.
+  A refused instance advertises `<socket>.unavailable` in `AGTERM_SOCKET`, so a command passing
+  `--socket "$AGTERM_SOCKET"` fails rather than reaching the owner. A BARE `agtermctl` still reaches it:
+  the CLI never reads that variable and resolves the default path. Isolate anyway — state is shared and
+  persisted session ids resolve in both instances, so an untargeted command lands on the live terminal.
+- `lsof -p <pid> | grep agterm.sock` showing an fd on a socket path `ls` cannot find means an orphaned
+  socket; a window scene that never bound one is a different fault. Reaching it now takes a build
+  predating the lock, or the socket file being deleted by hand.
 
 ## Protect the live terminal
 
@@ -104,6 +116,12 @@ concurrency before changing the bridge.
 - Manual Debug UI work uses a separate `open -n` instance with isolated state and short socket. Address
   its CLI with `--socket` after the subcommand. Stop only its known PID with SIGTERM; clean quit triggers
   the visible quit-confirmation alert. Use clean quit only when testing its final cwd/running-command flush.
+- Never run the Help ▸ Install installers (agent hooks, CLI, agent skill) from a Debug or worktree
+  instance, and never invoke `AgentHooksInstaller` in a manual run. They write `~/.config/agterm/`,
+  `~/.claude/settings.json`, and `~/.codex/`, which `AGTERM_STATE_DIR` does not isolate, and bake
+  `Bundle.main`'s `agtermctl` path into the installed wrappers. A Debug install silently repoints the
+  user's live hooks at DerivedData, and removing the worktree leaves them dead with no error.
+  Verify installer behavior through `agtermCore` tests, or redeploy Release and reinstall from it.
 - Unix socket paths cap near 104 bytes. A long scratch path lets the app launch while control bind fails.
 - Use absolute repo-root paths for existence checks. Tool cwd persists across calls and often drifts into
   `agtermCore`.
@@ -162,7 +180,11 @@ concurrency before changing the bridge.
   Review asks only three things: it does no harm, deliberately or accidentally; it does what it claims;
   and it follows `cookbook/CONTRIBUTING.md`.
   Edge cases, minor bugs, and other small findings never block the PR: approve and merge, leaving a note
-  for the contributor.
+  for the contributor. That note is where a recipe finding ends: never file it in `docs/backlog/`, which
+  is for code the project owns, and never edit a recipe's prose unprompted.
+- agterm runs only on macOS, so POSIX portability is never a finding by itself. A shellcheck SC3xxx on a
+  recipe is a CI lint gate, not a runtime defect: `/bin/sh` there is bash 3.2 and `printf %q` works.
+  Never propose a bash shebang as the fix; the mac shell is zsh, and CI's `.zsh` path is `zsh -n`.
 
 ## Website
 

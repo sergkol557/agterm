@@ -22,6 +22,31 @@ struct AppStorePaneTests {
         #expect(session.splitFocused == true)
     }
 
+    @Test func controlTreeReportsHasSplitAcrossHide() throws {
+        let store = makeStore()
+        let ws = store.addWorkspace(name: "work")
+        let session = store.addSession(toWorkspace: ws.id, cwd: "/a")!
+        func node() -> ControlSessionNode? { store.controlTree().workspaces.first?.sessions.first }
+        // bind before asserting: `node()?.hasSplit == nil` also holds when the session is gone from the
+        // tree, so a closeSplit that tore down the whole session would pass every omission check here.
+        var n = try #require(node())
+        #expect(n.split == false)
+        #expect(n.hasSplit == nil)
+        store.toggleSplit(session.id)
+        n = try #require(node())
+        #expect(n.split == true)
+        #expect(n.hasSplit == true)
+        store.toggleSplit(session.id)
+        n = try #require(node())
+        #expect(n.split == false)
+        #expect(n.hasSplit == true)
+        #expect(n.splitFocused != nil, "a hidden split still reports its focused pane")
+        store.closeSplit(session.id)
+        n = try #require(node())
+        #expect(n.hasSplit == nil)
+        #expect(n.splitFocused == nil)
+    }
+
     @Test func toggleSplitReshowPreservesFocusedPane() {
         let store = makeStore()
         let ws = store.addWorkspace(name: "work")
@@ -116,6 +141,26 @@ struct AppStorePaneTests {
         #expect(session.splitForegroundCommand == nil)
         // the `?? splitSurface` fallback is for a shown split pre-collapse, not for a promoted survivor.
         #expect(session.addressableSurface === split)
+    }
+
+    // #416: `session.new` answers ok for a model insert, and libghostty refuses to build a surface while
+    // the display sleeps, so this is the field that separates a working session from an empty one.
+    @Test func controlTreeReportsMainPaneRealization() {
+        let store = makeStore()
+        let ws = store.addWorkspace(name: "work")
+        let session = store.addSession(toWorkspace: ws.id, cwd: "/a")!
+
+        func realized() -> Bool? { store.controlTree().workspaces.first?.sessions.first?.realized }
+
+        #expect(realized() == false, "an empty surface slot has no terminal, so it is not realized")
+
+        let parked = SpySurface()
+        parked.isRealized = false
+        session.surface = parked
+        #expect(realized() == false, "a parked view whose libghostty surface never came up is not realized")
+
+        parked.isRealized = true
+        #expect(realized() == true)
     }
 
     @Test func addressableSurfaceIsTheMainPaneUntilThePrimaryExits() {
@@ -763,7 +808,7 @@ struct AppStorePaneTests {
         let surface = SpySurface()
         session.overlaySurface = surface
         let generation = session.overlaySlotGeneration
-        let next = HudSpec(message: "two", detail: "still working", spinner: .braille, position: .top)
+        let next = HudSpec(message: "two", detail: "still working", spinner: .braille, position: .topCenter)
         #expect(store.updateHud(session.id, spec: next, size: HudPanelSize(widthPercent: 44, heightPercent: 15)) == true)
         #expect(session.hudSpec == next)
         // an update cannot move the file: the running helper opened the path `openHud` gave it.
@@ -837,6 +882,25 @@ struct AppStorePaneTests {
         #expect(session.hudSpec?.backgroundColor == "#101820")
         #expect(session.overlayBackgroundColor == "#101820")
         #expect(session.hudSpec?.message == "three")
+    }
+
+    /// The two colors have opposite update lifetimes, and both halves are asserted here so a change making
+    /// them symmetric cannot pass: the background is held forward because the surface read it once, while
+    /// the text color rides the header and so drops with every other omitted field.
+    @Test func updateHudDropsAnOmittedTextColorWhileHoldingTheBackground() {
+        let store = makeStore()
+        let ws = store.addWorkspace(name: "work")
+        let session = store.addSession(toWorkspace: ws.id, cwd: "/a")!
+        store.openHud(session.id, command: "hud.sh",
+                      spec: HudSpec(message: "one", backgroundColor: "#101820", textColor: "#e0e0e0"),
+                      file: "/tmp/a", size: HudPanelSize(widthPercent: 20, heightPercent: 9))
+        #expect(session.hudSpec?.textColor == "#e0e0e0")
+
+        #expect(store.updateHud(session.id, spec: HudSpec(message: "two"),
+                                size: HudPanelSize(widthPercent: 20, heightPercent: 9)) == true)
+
+        #expect(session.hudSpec?.textColor == nil)
+        #expect(session.hudSpec?.backgroundColor == "#101820")
     }
 
     /// Every store-only HUD teardown, none of which runs a surface teardown: a HUD closed before its panel
@@ -924,7 +988,7 @@ struct AppStorePaneTests {
         let first = SpySurface()
         session.overlaySurface = first
         let generation = session.overlaySlotGeneration
-        let next = HudSpec(message: "two", position: .bottom)
+        let next = HudSpec(message: "two", position: .bottomCenter)
         #expect(store.openHud(session.id, command: "hud.sh", spec: next, file: "/tmp/b", size: HudPanelSize(widthPercent: 35, heightPercent: 9)) == true)
         #expect(session.hudSpec == next)
         #expect(session.hudFile == "/tmp/b")

@@ -266,6 +266,18 @@ struct WindowContentView: View {
         }
     }
 
+    /// The separator between the custom titlebar row and the content below it, themed (`chromeText` at low
+    /// opacity) so it stays visible on light themes. Both columns draw it so the line runs full width.
+    /// Hidden mode draws nothing: `titlebarHeight` is 0 there, so with no row above it the line would sit
+    /// on the window's top edge separating nothing, which reads as a rendering artifact (#368).
+    @ViewBuilder private var titlebarHairline: some View {
+        if toolbarMode != .hidden {
+            Rectangle()
+                .fill(chromeText.opacity(0.1))
+                .frame(height: 1)
+        }
+    }
+
     /// A plain `HStack` (sidebar + themed draggable divider + terminal) instead of `NavigationSplitView`, so
     /// macOS 26 can't impose Liquid-Glass sidebar chrome (inset panel, toggle capsule) or the toolbar style.
     @ViewBuilder private var splitRoot: some View {
@@ -305,10 +317,7 @@ struct WindowContentView: View {
 
     private var sidebarColumn: some View {
         VStack(spacing: 0) {
-            // matches the detail pane's hairline so the line runs full width under the title bar.
-            Rectangle()
-                .fill(chromeText.opacity(0.1))
-                .frame(height: 1)
+            titlebarHairline
             WorkspaceSidebar(store: store, actions: actions)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         }
@@ -388,11 +397,7 @@ struct WindowContentView: View {
 
     @ViewBuilder private var detailColumn: some View {
         VStack(spacing: 0) {
-            // hairline between the title bar and the terminal; in the detail pane so it starts at the
-            // sidebar's right edge, themed (chromeText, low opacity) so it stays visible on light themes.
-            Rectangle()
-                .fill(chromeText.opacity(0.1))
-                .frame(height: 1)
+            titlebarHairline
             detailPane
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // the overlay renders in-deck inside `sessionDetail` (`overlayPanel`), not at this level.
@@ -545,9 +550,11 @@ struct WindowContentView: View {
         if quickTerminal.isVisible {
             GeometryReader { geo in
                 ZStack {
-                    // the tap-catcher carries the `quick-terminal` accessibility id: a SwiftUI view is in
-                    // the a11y tree (the Metal-backed `QuickTerminalPane` is not), so tests query this one.
-                    // it spans the sidebar too, unlike the overlay's pane-scoped backdrop.
+                    // the tap-catcher carries the `quick-terminal` accessibility id, so tests query this
+                    // one. It spans the sidebar too, unlike the overlay's pane-scoped backdrop.
+                    // `QuickTerminalPane` is in the a11y tree as well: it takes the default
+                    // `deckVisible`/`viewOnly`, so the dictation bridge exposes its on-screen surface as a
+                    // "Terminal" text area. Do NOT set `deckVisible = false` here, that would drop it.
                     (store.activeSession.map { washColor(for: $0) } ?? terminalColor).opacity(muteWashOpacity)
                         .contentShape(Rectangle())
                         .onTapGesture { quickTerminal.hide() }

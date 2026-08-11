@@ -240,6 +240,14 @@ final class AppActions {
         return true
     }
 
+    /// The whole close-session keystroke as File ▸ Close Session performs it: dismiss the frontmost cover or
+    /// close the active session, and when there was neither — a zero-session window — close `window` instead.
+    /// Shared with the key monitor so a `close_session` alternative cannot be the one binding that dies in a
+    /// window with nothing left to close.
+    func closeActiveSessionOrWindow(_ window: NSWindow?) {
+        if !closeActiveSession() { window?.performClose(nil) }
+    }
+
     /// Resolve the pending picker owned by `windowID` as cancelled. Used by ⌘W and app termination;
     /// window teardown cancels through `PickRegistry.unregister` so it can retain the terminal result.
     @discardableResult
@@ -666,9 +674,18 @@ final class AppActions {
     /// closing only HIDES it (both shells stay alive) and maximizes the focused pane, so reopening restores
     /// both in their original positions with the SAME pane focused — focus follows `splitFocused`, which
     /// `AppStore.toggleSplit` moves only for a genuinely new split.
+    ///
+    /// A session-wide cover hides the panes, so rearranging them behind it would only be seen once the cover
+    /// goes — the layout the user left is silently different. A shown scratch is DISMISSED instead, ⌘W's
+    /// cover-first rule, making this the way back to the panes as they were; hiding is keep-alive, so the
+    /// scratch shell survives. A full overlay runs a caller's program that must not be closed under it, so
+    /// the press is inert. Control's `session.split` keeps acting on the deck behind either cover.
     func toggleSplit() {
         guard uiActionsEnabled else { return }
         guard let store, let session = store.activeSession else { return }
+        guard !session.fullOverlayActive else { return }
+        // the deck's `scratchActive` onChange reclaims first responder for the pane, as it does for ⌘J.
+        if session.scratchActive { store.toggleScratch(session.id); return }
         store.toggleSplit(session.id)
         focusSplitPane(session, wantSplit: session.splitFocused)
     }
@@ -748,7 +765,9 @@ final class AppActions {
     }
 
     /// Toggle native macOS full screen for the key window: the green traffic-light behavior, moving the window
-    /// to its own Space; a second invocation exits. Shared by ⌃⌘F, the palette, `toggle_fullscreen`, `window.fullscreen`.
+    /// to its own Space; a second invocation exits. The palette's entry alone — `toggle_fullscreen`'s chord
+    /// calls `NSWindow.toggleFullScreen` from the key monitor and `window.fullscreen` through
+    /// `WindowRegistry`, so neither routes here.
     func toggleFullscreen() { NSApp.keyWindow?.toggleFullScreen(nil) }
 
     // MARK: - Font (on the focused terminal)
