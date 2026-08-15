@@ -50,6 +50,14 @@ paths:
 - TOML merging refreshes managed markers while preserving trust tables. Leave foreign markers, existing
   user hooks, and invalid TOML untouched; show manual instructions for the last two. Require `/hooks`
   review for command-hook changes.
+- Every install-result alert line stays ONE LINE and embeds no generated block; two or three sentences on
+  that line are fine, and `AgentHooksInstallerTests` pins exactly that. `NSAlert` sizes itself to fit
+  `informativeText` with no scroll and no height cap, so embedding the hooks block grew the window past the
+  bottom of the screen (#430) — the block's long `command =` lines wrap several times each in that narrow
+  column. The two manual-merge cases open `site/docs.html#codex-hooks-manual` through a second button
+  instead, `informativeText` being plain unselectable text that renders no link. Keep the button second so
+  OK stays the default and Return still dismisses. That docs section carries a copy of `codexHooksBlock`
+  and drifts from it silently.
 - Install Pi only when `~/.pi/agent` exists. Start is active; settle only after retries, compaction, and
   queued continuations. Pi exposes no reliable blocked event, so never infer it from prose.
 - Install OpenCode only when its config exists and export only `AgtermStatusPlugin`; the legacy loader
@@ -107,15 +115,17 @@ paths:
 
 ## Public catalog
 
-There are 75 public commands:
+The public commands, which no surface states a COUNT of: a total is stated nowhere and pinned by nothing, so
+adding one is an edit to this list and the surfaces that document the command itself, never a synchronized
+renumbering. Do not reintroduce a count anywhere.
 
 - `tree`, `events.read`
-- `workspace.new`, `.rename`, `.delete`, `.select`, `.move`, `.focus`, `.filter`, `.collapse`, `.expand`
+- `workspace.new`, `.rename`, `.delete`, `.select`, `.go`, `.move`, `.focus`, `.filter`, `.collapse`, `.expand`
 - `session.new`, `.duplicate`, `.close`, `.select`, `.rename`, `.reveal`, `.move`, `.type`, `.split`,
   `.split.close`,
   `.scratch`, `.focus`, `.resize`, `.go`, `.copy`, `.paste`, `.selectall`, `.text`, `.search`, `.status`,
   `.flag`, `.seen`, `.restore`, `.background`, `.overlay.open`, `.overlay.close`, `.overlay.resize`,
-  `.overlay.result`, `.hud.open`, `.hud.update`, `.hud.close`
+  `.overlay.result`, `.overlay.copy`, `.overlay.text`, `.hud.open`, `.hud.update`, `.hud.close`
 - `surface.zoom`, `dashboard`, `pick.open`, `pick.result`, `pick.cancel`
 - `quick`, `quick.type`, `quick.text`
 - `sidebar`, `sidebar.mode`, `sidebar.expand`, `sidebar.collapse`, `notify`
@@ -124,7 +134,7 @@ There are 75 public commands:
   `.fullscreen`, `.minimize`
 - `keymap.reload`, `keymap.list`, `config.reload`, `theme.set`, `theme.list`, `restore.clear`
 
-`debug.appearance` is a private 76th `Command` case used only by `AppearanceFlipUITests`.
+`debug.appearance` is a private `Command` case, absent from the list above, used only by `AppearanceFlipUITests`.
 It accepts light/dark, sets `NSApp.appearance`, posts `.agtermSystemAppearanceChanged`, echoes the effective
 side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provide no CLI or skill entry.
 
@@ -148,8 +158,17 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   between-row surface. `active` resolves through `currentWorkspaceID` — a foreground-created workspace
   first, then the selected session's, then `workspaces.last` — so repeated moves may target a different
   workspace; use an ID to keep one target.
-- `session.split` drives the addressed session, not active-only `AppActions.toggleSplit`. Off hides and
-  retains the shell; `session.split.close` and the split shell's own exit are what tear it down.
+- `workspace.go --to next|prev` steps the CURRENT workspace through `visibleWorkspaces`, wrapping, and
+  routes through `selectWorkspace`, so it lands on the target's FIRST session and inherits the
+  empty-workspace reveal. Relative like `session.go`, so it takes no target; `workspace.move` is the
+  neighbouring verb that reorders instead. Returns the workspace id it landed on. Collapse state is NOT a
+  term — a folded workspace is stepped into like any other, and issue #435 assumed otherwise. Errors with
+  `no other workspace to navigate to` where there is nowhere to step: flagged mode, or one visible
+  workspace. Read back through `tree` selection; the GUI twins are `previous_workspace`/`next_workspace`.
+- `session.split` drives the addressed session, not active-only `AppActions.toggleSplit`. `--axis
+  vertical|horizontal` selects left/right or top/bottom; omitting it preserves an existing split's axis
+  and defaults a new split to left/right. Off hides and retains the shell; `session.split.close` and the
+  split shell's own exit are what tear it down.
   `split` reports SHOWN, so a hidden split reads false;
   `hasSplit` reports the pane existing at all and is present exactly when `splitRatio`/`splitFocused`
   can be. Callers asking "does this session have a split" read `hasSplit`, and `agtermctl tree` tags the
@@ -161,12 +180,12 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
 - `session.scratch` is a third, nonpersisted login shell with on/off/toggle. It spawns lazily, survives
   hiding, recreates after exit, and renders as a full translucent cover below overlay. It has no session
   PWD/title link but a weak watermark link. GUI surfaces are Command-J, titlebar, View, and palette.
-- `session.focus --pane left|right|other` requires an existing split and works shown or hidden.
-  Read `splitFocused`.
-- `session.resize` accepts exactly one absolute ratio or relative grow-left/grow-right delta, defaulting
-  an unset ratio to 0.5. Require a split, clamp through store limits, persist, then post the object-scoped
-  live-divider notification. Hidden split stores for next show. Return clamped ratio as `%.3f`; read
-  `splitRatio`.
+- `session.focus primary|split|left|right|top|bottom|other` requires an existing split and works shown or
+  hidden. The pane is positional; read `splitFocused`.
+- `session.resize` accepts exactly one absolute ratio or one relative
+  `--grow-left|right|primary|split|top|bottom` delta, defaulting an unset ratio to 0.5. Require a split,
+  clamp through store limits, persist, then post the object-scoped live-divider notification. Hidden split
+  stores for next show. Return clamped ratio as `%.3f`; read `splitRatio`.
 - `session.go --to next|prev|first|last|next-attention|prev-attention` operates on current selection in
   the placement store, wraps within filtered scope, and returns selected ID. It has no target.
 - `notify` requires body, defaults title and session, skips OSC focus suppression, increments unseen, and
@@ -197,7 +216,9 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
 
 ## Surface input, output, and search
 
-- `session.type --pane left|right|scratch` defaults to main for compatibility, not focused/on-screen.
+- `session.type --pane` accepts `primary|left|top`, `split|right|bottom`, or `scratch`; omission defaults
+  to primary for compatibility, not focused/on-screen. Read-back and the stable invalid-value error use
+  canonical `left|right|scratch` names.
   Hidden live scratch is addressable; missing panes error. Main alone bounded-polls (12 × 30ms) a newly
   unrealized session, with or without `select`, so `session.new --no-select` plus an immediate type does
   not race the mount+layout gap (#349). The probe precedes every sleep, so a realized session pays nothing
@@ -212,7 +233,8 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   markers under rapid use.
 - `session.copy` returns the addressed main selection without touching clipboard; empty is `no selection`,
   and an unrealized pane is `session not realized` — `readSelection` cannot tell the two apart, and copy is
-  select-all's read-back, so both name that state the same way.
+  select-all's read-back, so both name that state the same way. It stays on the PANE while an overlay covers
+  it, so a selection made inside one is `session.overlay.copy`'s, not this command's.
   `session.paste` and `.selectall` run Ghostty bindings on main. They use
   `Session.addressableSurface = surface ?? splitSurface`, never focus-aware `activeSurface`, so select-all
   and copy share one pane. Read paste through text and select-all through copy.
@@ -237,6 +259,8 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   never happened. `failed to read surface buffer` is left to a real read failure on a realized surface.
   `quick.text` keeps its own vocabulary and still reports that string for an unrealized quick surface.
   Output is plain text because pinned Ghostty exposes no styled-cell read.
+  `onScreenSurface` is pane-vs-scratch only, so every `--pane` and the default alike read the surface
+  UNDER an overlay; the covering program is `session.overlay.text`.
 - `session.search` selects and realizes the target, then searches its focused surface. Text opens/updates;
   to next/prev navigates; close ends; no arguments opens empty UI. Poll async SEARCH_TOTAL and return count
   plus `searchDisplayText`. Search fields are ephemeral and shared with the GUI.
@@ -270,6 +294,18 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   output, and exits with captured status.
 - `overlay.resize` requires an open overlay and exactly one valid percent or `--full`; mutate the same
   surface host. Read `overlaySizePercent`, gated by overlay-active because nil means either full or absent.
+- `overlay.copy`/`overlay.text` read the COVERING surface, which `session.copy`/`session.text` cannot reach
+  (#434) — those address the pane the overlay hides, so a selection made in the overlay reads as
+  `no selection` and `--pane right` returns the shell underneath. Both take the overlay family's own
+  `--pane`, never the shared `left|right|scratch` one: widening that would let `session.status`/`.restore`
+  reach a `StatusPane` that has no overlay case, over persisted state. `ControlServer.overlayReadSurface`
+  resolves both, so an empty slot (`no overlay`) and a filled one whose surface has not come up
+  (`overlay not realized`, naming the cover rather than borrowing `session not realized`) cannot mean
+  different things on one command than the other. A HUD is refused ahead of both with
+  `OverlayHudError.noRead`: it paints the app's own message, and `overlayActive` alone cannot tell it from
+  a caller's program. `overlay.text` validates `--all`/`--lines` through the same `parseBufferExtent` as
+  `session.text`, before the pane, so identical flags produce the identical first error. These are reads,
+  so they add no read-back field.
 - `session.hud.*` puts a passive message panel in the SESSION-WIDE overlay slot rather than adding a cover,
   so the Command-W ladder, `coverHidesActiveSession`, `searchTarget`, and session-close teardown are
   unchanged. It is control-native: no menu item, chord, or palette entry, a deliberate exemption from
@@ -390,8 +426,8 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   no IDs/MRU/font; open needs IDs or MRU; fixed size must be finite positive.
 - A split expands to primary and split `DashboardMember`s, unless the id carries a `:left`/`:right` suffix
   (#331) selecting one pane. Host-free `DashboardTarget` owns that grammar: split on the FIRST colon,
-  accept only `left`/`right` case-insensitively, reject everything else including `primary`/`split`,
-  `scratch`/`overlay`, and a pasted `surface:<id>:<pane>`. The dispatcher rejects bad grammar outright; a
+  accept `primary`/`left`/`top` and `split`/`right`/`bottom` case-insensitively while readback stays
+  `left`/`right`; reject `scratch`/`overlay` and a pasted `surface:<id>:<pane>`. The dispatcher rejects bad grammar outright; a
   well-formed ref naming no pane (`:right` without a split) is a soft miss joining `unresolved`.
 - Resolve targets in order and deduplicate by session+pane, then cap panes app-side at
   `DashboardLayout.maxCells` 9. Append dropped-pane text to unresolved text with `;`. Guard emptiness on the
@@ -402,7 +438,7 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
   `promoteSplitMember` rewrites that session's `.split` cell to `.primary` from `agtermApp.handlePaneExit`.
   Reconcile cannot do this: `closeSplit` and `closePrimaryPane` leave identical `hasSplit == false` state,
   and only the exit path knows which happened.
-- Dashboard is per-window and view-only; GUI Command-Shift-D/menu/palette toggles MRU auto-size.
+- Dashboard is per-window and view-only; GUI Command-Shift-G/menu/palette toggles MRU auto-size.
   Arrows navigate ragged `ceil(sqrt(n))` grid, Enter closes then selects/focuses exact pane, Esc closes.
   It is reciprocal with zoom. Read live `dashboardMembers`, highlighted member, applied font size, and
   `auto|fixed|untouched` mode. See [[libghostty]] for reparent, input gates, and transient font.
@@ -491,7 +527,7 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
 ## Tree and window read-back
 
 - Session nodes include foreground/split foreground argv, background spec, overlay size, pane overlays,
-  split ratio, split focus, status fields, flag, unseen, restore pins, surfaces, and `realized`.
+  split axis, split ratio, split focus, status fields, flag, unseen, restore pins, surfaces, and `realized`.
 - `realized` reports the MAIN pane's `TerminalSurface.isRealized`, populated host-free in
   `AppStore.controlTree` (no app closure — `isRealized` is on the protocol) and false for an empty slot, so
   only a server predating the field omits it. It exists because `session.new` answers `ok` for a model
@@ -562,9 +598,6 @@ side, and reads `lastAppliedIsDark` when bare. Refuse it outside XCUITest; provi
 
 ## Documentation mirrors
 
-- Keep the bundled skill synchronized with commands, arguments, results, keymap, model, and command count.
-  `SkillInstallTests` checks its `Command summary (N commands)`.
-- `site/commands.html` documents every command, invocation, arguments, and read-back. Keep its four count
-  mentions, README, docs mirror, skill, and test aligned.
-- Search count patterns, not an assumed old/new value, then inspect every two/three-digit number in this
-  file. Counting only explicit raw-value assignments undercounts implicit cases.
+- Keep the bundled skill synchronized with commands, arguments, results, keymap, and model.
+- `site/commands.html` documents every command, invocation, arguments, and read-back; `site/docs.html`,
+  README and the skill link to it rather than restating the catalog.

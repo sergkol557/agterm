@@ -703,14 +703,15 @@
                 <div
                   style="font-family: &quot;JetBrains Mono&quot;, monospace; font-size: 14px; color: #6d82f3; margin-bottom: 8px"
                 >
-                  Split panes <span style="color: #6b727a">⌘D</span>
+                  Split panes <span style="color: #6b727a">⌘D / ⌘⇧D</span>
                 </div>
                 <p style="font-size: 15px; line-height: 1.6; color: #949ba4; margin: 0">
-                  A session can split into two shells side by side. Both panes share one sidebar row — a split is one session with
-                  two terminals, not two sessions. One pane is focused at a time and the divider position is remembered —
-                  drag the divider to resize the panes, double-click it to snap back to an even split. ⌘D hides a split rather
-                  than closing it, keeping the second shell alive; <strong style="color: #bfbab0">Close Split</strong> in the
-                  action palette tears the pane down whatever it is running.
+                  A session can split into two shells side by side with ⌘D or top and bottom with ⌘⇧D. Both panes share one
+                  sidebar row: a split is one session with two terminals, not two sessions. Using the other shortcut transposes
+                  a shown split; using its current shortcut hides it without closing the second shell. The divider follows the
+                  current axis and remembers its position; drag it to resize the panes or double-click it to return to an even
+                  split. <strong style="color: #bfbab0">Close Split</strong> in the action palette tears the pane down whatever
+                  it is running.
                 </p>
               </div>
               <div
@@ -811,7 +812,7 @@
                   <code style="color: #e6e1d7">tree --json</code> reports in <code style="color: #e6e1d7">dashboardMembers</code> — so
                   <code style="color: #e6e1d7">agtermctl dashboard "$a:left" "$b:right"</code> keeps the panes you did not ask for
                   out of the nine-cell budget. The most-recently-used grid also has a built-in opener —
-                  <strong>⌘⇧D</strong> (or <strong>Navigate ▸ Dashboard</strong>, the command palette's Dashboard, or the
+                  <strong>⌘⇧G</strong> (or <strong>Navigate ▸ Dashboard</strong>, the command palette's Dashboard, or the
                   title-bar grid button) opens it auto-sized. Cell fonts size absolutely
                   (<code style="color: #e6e1d7">--font-size</code>) or scale to the grid
                   (<code style="color: #e6e1d7">--auto-size</code>). Mutually exclusive with terminal zoom.
@@ -1247,7 +1248,7 @@
               "
             >
               <p style="font-size: 15px; line-height: 1.65; color: #cbc6bc; margin: 0">
-                Looking for the full list? All 75 commands, with every argument, return value, and error, live on the
+                Looking for the full list? Every command, with its arguments, return values, and errors, lives on the
                 <a href="/commands" style="color: #6d82f3; font-weight: 500">Command reference →</a>
               </p>
             </div>
@@ -1404,6 +1405,8 @@
               <span style="color: #6b727a">&nbsp;&nbsp;# move a batch as one ordered block</span
               ><br />agtermctl session close --target 9f3c --target abcd
               <span style="color: #6b727a">&nbsp;&nbsp;# one grace-period undo for the batch</span
+              ><br />agtermctl workspace go --to next
+              <span style="color: #6b727a">&nbsp;&nbsp;&nbsp;# step to the next workspace and select its first session</span
               ><br />agtermctl workspace move --to top
               <span style="color: #6b727a">&nbsp;&nbsp;&nbsp;# reorder a workspace</span><br />agtermctl workspace new work --collapsed
               <span style="color: #6b727a">&nbsp;&nbsp;&nbsp;# create a workspace closed in the sidebar (fill with session new --no-select)</span
@@ -1483,9 +1486,9 @@
                 color: #e6e1d7;
               "
             >
-              agtermctl session split toggle<br />agtermctl session split close
-              <span style="color: #6b727a">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# tear the pane down; hide keeps its shell alive</span><br />agtermctl session resize --split-ratio 0.7
-              <span style="color: #6b727a">&nbsp;# or --grow-left/--grow-right D</span><br />agtermctl session scratch toggle
+              agtermctl session split toggle --axis horizontal<br />agtermctl session split close
+              <span style="color: #6b727a">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# vertical=left/right; horizontal=top/bottom</span><br />agtermctl session resize --split-ratio 0.7
+              <span style="color: #6b727a">&nbsp;# primary fraction; grow role/position aliases also work</span><br />agtermctl session scratch toggle
               <span style="color: #6b727a">&nbsp;&nbsp;&nbsp;&nbsp;# on|off|toggle</span><br />agtermctl session flag on
               <span style="color: #6b727a">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# on|off|toggle|clear</span><br />agtermctl session seen --target 9f3c
               <span style="color: #6b727a">&nbsp;# clear the unseen badge, focus-free</span><br />agtermctl
@@ -1540,7 +1543,11 @@
               9f3c<br />agtermctl session overlay result
               <span style="color: #6b727a">&nbsp;&nbsp;# last overlay's exit status</span><br /><br /><span style="color: #6b727a"
                 ># cover only one split pane, leaving the sibling pane live</span
-              ><br />agtermctl session overlay open <span style="color: #f2b45c">"revdiff HEAD~3"</span> --target 9f3c --pane right
+              ><br />agtermctl session overlay open <span style="color: #f2b45c">"revdiff HEAD~3"</span> --target 9f3c --pane right<br /><br /><span
+                style="color: #6b727a"
+                ># read what is INSIDE the overlay — the selection the user made, or its drawn screen</span
+              ><br />agtermctl session overlay copy --target 9f3c --pane right<br />agtermctl session overlay text --target 9f3c
+              --pane right
             </div>
             <p style="font-size: 15px; line-height: 1.65; color: #949ba4; margin: 16px 0 0">
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">--wait</span> keeps a "press any key
@@ -1563,6 +1570,23 @@
               whose overlay is open.
             </p>
             <p style="font-size: 15px; line-height: 1.65; color: #949ba4; margin: 16px 0 0">
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">session overlay copy</span> returns the
+              selection made inside the overlay and
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">session overlay text</span> its terminal
+              buffer. These exist because
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">session copy</span> and
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">session text</span> address the pane the
+              overlay covers: text you highlight in an overlay reads there as
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">no selection</span>, and
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">session text --pane right</span> hands
+              back the shell underneath. Reach for them when the read is not chord-driven: an agent polling from outside, or a
+              script wanting the selection some time after the fact. A chord already receives the selection of the surface it
+              fired in, the overlay included, as
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">$AGT_SELECTION</span>, so a custom
+              command should use that rather than a later socket read. The buffer one returns a TUI's screen as drawn, wrapped
+              where it wrapped — for a program's real output, still read the file it writes.
+            </p>
+            <p style="font-size: 15px; line-height: 1.65; color: #949ba4; margin: 16px 0 0">
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">--pane left|right</span> scopes the
               overlay to one split pane instead of the whole session: it covers exactly that pane and leaves the sibling pane
               visible and interactive, so an agent working in the split can show a diff or a TUI over its own pane without
@@ -1579,8 +1603,10 @@
               without checking whether the session is split. A pane that is not on screen is refused with
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">pane not visible</span>; hiding the
               split after opening is fine, the program keeps running and reappears when the split comes back.
-              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">close</span> and
-              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">result</span> take the same
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">close</span>,
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">result</span>,
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">copy</span> and
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">text</span> take the same
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">--pane</span>, ⌘W dismisses the
               focused pane's overlay before it would close the session (one on the other pane is not in front of you, so ⌘W keeps
               its ordinary meaning), and
@@ -1949,7 +1975,7 @@
                 color: #cbc6bc;
               "
             >
-              new_window&nbsp;&nbsp;&nbsp;rename_window&nbsp;&nbsp;&nbsp;delete_window<br />new_workspace&nbsp;&nbsp;&nbsp;rename_workspace&nbsp;&nbsp;&nbsp;delete_workspace<br />new_session&nbsp;&nbsp;&nbsp;open_directory&nbsp;&nbsp;&nbsp;rename_session&nbsp;&nbsp;&nbsp;duplicate_session<br />close_session&nbsp;&nbsp;&nbsp;reopen_recent&nbsp;&nbsp;&nbsp;undo_close&nbsp;&nbsp;&nbsp;clear_status<br />increase_font_size&nbsp;&nbsp;&nbsp;decrease_font_size&nbsp;&nbsp;&nbsp;reset_font_size<br />toggle_split&nbsp;&nbsp;&nbsp;toggle_scratch&nbsp;&nbsp;&nbsp;toggle_search<br />toggle_sidebar&nbsp;&nbsp;&nbsp;toggle_flag&nbsp;&nbsp;&nbsp;toggle_flagged_view<br />focus_left_pane&nbsp;&nbsp;&nbsp;focus_right_pane&nbsp;&nbsp;&nbsp;focus_workspace&nbsp;&nbsp;&nbsp;toggle_workspace_filter<br />previous_session&nbsp;&nbsp;&nbsp;next_session&nbsp;&nbsp;&nbsp;first_session&nbsp;&nbsp;&nbsp;last_session<br />previous_attention_session&nbsp;&nbsp;&nbsp;next_attention_session<br />quick_terminal&nbsp;&nbsp;&nbsp;session_palette&nbsp;&nbsp;&nbsp;command_palette<br />custom_command_palette&nbsp;&nbsp;&nbsp;show_attention<br />select_theme&nbsp;&nbsp;&nbsp;toggle_fullscreen&nbsp;&nbsp;&nbsp;toggle_terminal_zoom<br />dashboard
+              new_window&nbsp;&nbsp;&nbsp;rename_window&nbsp;&nbsp;&nbsp;delete_window<br />new_workspace&nbsp;&nbsp;&nbsp;rename_workspace&nbsp;&nbsp;&nbsp;delete_workspace<br />new_session&nbsp;&nbsp;&nbsp;open_directory&nbsp;&nbsp;&nbsp;rename_session&nbsp;&nbsp;&nbsp;duplicate_session<br />close_session&nbsp;&nbsp;&nbsp;reopen_recent&nbsp;&nbsp;&nbsp;undo_close&nbsp;&nbsp;&nbsp;clear_status<br />increase_font_size&nbsp;&nbsp;&nbsp;decrease_font_size&nbsp;&nbsp;&nbsp;reset_font_size<br />toggle_split&nbsp;&nbsp;&nbsp;toggle_horizontal_split&nbsp;&nbsp;&nbsp;toggle_scratch&nbsp;&nbsp;&nbsp;toggle_search<br />toggle_sidebar&nbsp;&nbsp;&nbsp;toggle_flag&nbsp;&nbsp;&nbsp;toggle_flagged_view<br />focus_left_pane&nbsp;&nbsp;&nbsp;focus_right_pane&nbsp;&nbsp;&nbsp;focus_workspace&nbsp;&nbsp;&nbsp;toggle_workspace_filter<br />toggle_workspace_collapse<br />previous_session&nbsp;&nbsp;&nbsp;next_session&nbsp;&nbsp;&nbsp;first_session&nbsp;&nbsp;&nbsp;last_session<br />previous_workspace&nbsp;&nbsp;&nbsp;next_workspace<br />previous_attention_session&nbsp;&nbsp;&nbsp;next_attention_session<br />quick_terminal&nbsp;&nbsp;&nbsp;session_palette&nbsp;&nbsp;&nbsp;command_palette<br />custom_command_palette&nbsp;&nbsp;&nbsp;show_attention<br />select_theme&nbsp;&nbsp;&nbsp;toggle_fullscreen&nbsp;&nbsp;&nbsp;toggle_terminal_zoom<br />dashboard
             </div>
             <p style="font-size: 15px; line-height: 1.65; color: #949ba4; margin: 16px 0 0">
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">toggle_fullscreen</span> is the one
@@ -2567,6 +2593,98 @@
               is ignored so it does not double-fire with
               <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">session.status</span>.
               Restart OpenCode after installing it.
+            </p>
+
+            <h3
+              id="codex-hooks-manual"
+              style="
+                font-family: &quot;JetBrains Mono&quot;, monospace;
+                font-weight: 600;
+                font-size: 17px;
+                color: #e6e1d7;
+                margin: 28px 0 12px;
+                scroll-margin-top: 88px;
+              "
+            >
+              Add Codex hooks by hand
+            </h3>
+            <p style="font-size: 15px; line-height: 1.65; color: #949ba4; margin: 0 0 14px">
+              The installer never rewrites a
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">~/.codex/config.toml</span>
+              it does not own. If that file already defines its own
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">[hooks…]</span>
+              entries, or is not valid TOML, it is left untouched and the install alert sends you here. Add the
+              six blocks below yourself, replacing
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">/Users/you</span>
+              with your own home directory — the path has to be absolute, since Codex runs the hook without
+              your shell's PATH.
+            </p>
+            <p style="font-size: 15px; line-height: 1.65; color: #949ba4; margin: 0 0 14px">
+              Check the shape of your existing hooks first, because that is the reason the installer declined to
+              do this for you. If every one of them is written as an
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">[[hooks.…]]</span>
+              array-of-tables entry, appending is safe, including for events you already hook — a repeated
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">[[…]]</span>
+              header adds an element rather than redefining a key, so both your hook and agterm's run. If
+              instead you have an inline
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">hooks = { … }</span>
+              table or a plain
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">[hooks.SessionStart]</span>
+              table, appending makes the file stop parsing, since TOML allows neither extending a closed inline
+              table nor overwriting a defined value. Convert those entries to the array-of-tables form first,
+              then append. Do not add a second
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">command</span>
+              line inside an existing entry — a repeated key in one table breaks the file just as surely.
+            </p>
+            <div
+              style="
+                background: #15191c;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 10px;
+                padding: 16px 18px;
+                font-family: &quot;JetBrains Mono&quot;, monospace;
+                font-size: 13px;
+                line-height: 1.6;
+                color: #e6e1d7;
+                overflow-x: auto;
+                white-space: pre;
+              "
+            >[[hooks.SessionStart]]
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "'/Users/you/.config/agterm/agent-status/agterm-codex-status.sh' session-start"
+
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "'/Users/you/.config/agterm/agent-status/agterm-codex-status.sh' user-prompt-submit"
+
+[[hooks.PreToolUse]]
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "'/Users/you/.config/agterm/agent-status/agterm-codex-status.sh' pre-tool-use"
+
+[[hooks.PostToolUse]]
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = "'/Users/you/.config/agterm/agent-status/agterm-codex-status.sh' post-tool-use"
+
+[[hooks.PermissionRequest]]
+[[hooks.PermissionRequest.hooks]]
+type = "command"
+command = "'/Users/you/.config/agterm/agent-status/agterm-codex-status.sh' permission-request"
+
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = "command"
+command = "'/Users/you/.config/agterm/agent-status/agterm-codex-status.sh' stop"</div>
+            <p style="font-size: 15px; line-height: 1.65; color: #949ba4; margin: 14px 0 0">
+              The adapter script itself is already in place — the installer copies it to
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">~/.config/agterm/agent-status/</span>
+              on every run, whether or not the config merge succeeded. Once the blocks are added, run
+              <span style="font-family: &quot;JetBrains Mono&quot;, monospace; color: #cbc6bc">/hooks</span>
+              in Codex and approve them; command hooks stay inert until you do. For the unparseable case, fixing
+              the TOML and re-running the installer is the easier route — it will merge the blocks for you.
             </p>
           </section>
 

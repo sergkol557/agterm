@@ -418,6 +418,39 @@ struct ControlDispatcherTests {
         ])
     }
 
+    @Test func workspaceGoRoutesBothDirectionsThroughActions() async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+
+        let next = await dispatcher.dispatch(ControlRequest(cmd: .workspaceGo, args: ControlArgs(window: "win", to: "next")))
+        let prev = await dispatcher.dispatch(ControlRequest(cmd: .workspaceGo, args: ControlArgs(to: "prev")))
+        let spelled = await dispatcher.dispatch(ControlRequest(cmd: .workspaceGo, args: ControlArgs(to: "previous")))
+
+        #expect(next == ControlResponse(ok: true))
+        #expect(prev == ControlResponse(ok: true))
+        #expect(spelled == ControlResponse(ok: true))
+        #expect(actions.calls == [
+            .workspaceGo(window: "win", .next),
+            .workspaceGo(window: nil, .previous),
+            .workspaceGo(window: nil, .previous)
+        ])
+    }
+
+    @Test func workspaceGoRejectsMissingOrUnknownDirectionWithoutCallingActions() async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+
+        let missing = await dispatcher.dispatch(ControlRequest(cmd: .workspaceGo))
+        let unknown = await dispatcher.dispatch(ControlRequest(cmd: .workspaceGo, args: ControlArgs(to: "sideways")))
+        // session.go accepts these two, workspace.go does not — a workspace has no ends to jump to
+        let sessionOnly = await dispatcher.dispatch(ControlRequest(cmd: .workspaceGo, args: ControlArgs(to: "first")))
+
+        #expect(missing == ControlResponse(ok: false, error: "workspace.go requires --to next|prev"))
+        #expect(unknown == ControlResponse(ok: false, error: "workspace.go requires --to next|prev"))
+        #expect(sessionOnly == ControlResponse(ok: false, error: "workspace.go requires --to next|prev"))
+        #expect(actions.calls.isEmpty)
+    }
+
     @Test func workspaceRenameRejectsMissingOrBlankNameWithoutCallingActions() async {
         let actions = MockControlActions()
         let dispatcher = ControlDispatcher(actions: actions)
@@ -965,7 +998,7 @@ struct ControlDispatcherTests {
         let split = await dispatcher.dispatch(ControlRequest(
             cmd: .sessionSplit,
             target: "session",
-            args: ControlArgs(mode: "off", window: "win")
+            args: ControlArgs(mode: "off", axis: "horizontal", window: "win")
         ))
         let splitClose = await dispatcher.dispatch(ControlRequest(
             cmd: .sessionSplitClose,
@@ -994,12 +1027,21 @@ struct ControlDispatcherTests {
         #expect(focus == ControlResponse(ok: true))
         #expect(resize == ControlResponse(ok: true))
         #expect(actions.calls == [
-            .sessionSplit(target: "session", window: "win", "off"),
+            .sessionSplit(target: "session", window: "win", "off", .topBottom),
             .sessionSplitClose(target: "session", window: "win"),
             .sessionScratch(target: "session", window: nil, "on", command: "htop"),
             .sessionFocus(target: "session", window: nil, "right"),
             .sessionResize(target: "session", window: "win", .delta(-0.1))
         ])
+    }
+
+    @Test func splitRejectsAnUnknownAxisBeforeDispatch() async {
+        let actions = MockControlActions()
+        let response = await ControlDispatcher(actions: actions).dispatch(ControlRequest(
+            cmd: .sessionSplit, args: ControlArgs(mode: "toggle", axis: "diagonal")))
+        #expect(response == ControlResponse(ok: false,
+                                           error: "invalid split axis: diagonal (vertical|horizontal)"))
+        #expect(actions.calls.isEmpty)
     }
 
     @Test func resizeRejectsInvalidInputs() async {

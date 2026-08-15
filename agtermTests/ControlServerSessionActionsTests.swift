@@ -233,6 +233,37 @@ final class ControlServerSessionActionsTests: XCTestCase {
         XCTAssertEqual(sessionWide.error, "no overlay result", "a pane overlay must not fill the session slot")
     }
 
+    // MARK: - session.overlay.copy / .text
+
+    // #434: an empty slot and a filled-but-unrealized one are different answers.
+    func testOverlayReadsSeparateAnEmptySlotFromAnUnrealizedSurface() throws {
+        let store = try XCTUnwrap(library.activeStore)
+        let owner = try XCTUnwrap(store.currentWorkspaceID)
+        let session = try XCTUnwrap(store.addSession(toWorkspace: owner, cwd: NSHomeDirectory()))
+        let sessionWide = ControlSessionOverlayTextOptions(pane: nil, all: false, lines: nil)
+        let leftPane = ControlSessionOverlayTextOptions(pane: .left, all: false, lines: nil)
+
+        XCTAssertEqual(server.copySessionOverlaySelection(session.id.uuidString, window: nil, pane: nil).error,
+                       "no overlay")
+        XCTAssertEqual(server.readSessionOverlayText(session.id.uuidString, window: nil, options: sessionWide).error,
+                       "no overlay")
+        XCTAssertEqual(server.copySessionOverlaySelection(session.id.uuidString, window: nil, pane: .left).error,
+                       "no overlay")
+
+        XCTAssertNil(store.openPaneOverlay(session.id, pane: .left, command: "true"))
+        XCTAssertEqual(server.copySessionOverlaySelection(session.id.uuidString, window: nil, pane: .left).error,
+                       "overlay not realized", "the slot is filled; it is the cover that has no terminal yet")
+        XCTAssertEqual(server.readSessionOverlayText(session.id.uuidString, window: nil, options: leftPane).error,
+                       "overlay not realized")
+
+        // the other half of that branch: a view parked in the slot whose libghostty surface never came up
+        session.setPaneOverlaySurface(GhosttySurfaceView(workingDirectory: NSTemporaryDirectory()), pane: .left)
+        XCTAssertEqual(server.copySessionOverlaySelection(session.id.uuidString, window: nil, pane: .left).error,
+                       "overlay not realized")
+        XCTAssertEqual(server.copySessionOverlaySelection(session.id.uuidString, window: nil, pane: .right).error,
+                       "no overlay", "the sibling slot is independent, not borrowed from the open one")
+    }
+
     // MARK: - session.hud.*
 
     private func makeHudSession() throws -> (AppStore, Session) {
@@ -471,6 +502,24 @@ final class ControlServerSessionActionsTests: XCTestCase {
                        "no overlay result", "a closed hud records no exit code either")
     }
 
+    // `overlayActive` is true for a hud too, so the refusal has to name it.
+    func testOverlayReadsRefuseAHudByName() throws {
+        let (store, session) = try makeHudSession()
+        XCTAssertTrue(server.openHud(session.id.uuidString, window: nil, spec: HudSpec(message: "working")).ok)
+        let options = ControlSessionOverlayTextOptions(pane: nil, all: false, lines: nil)
+
+        XCTAssertEqual(server.copySessionOverlaySelection(session.id.uuidString, window: nil, pane: nil).error,
+                       "no overlay to read: the slot holds a hud")
+        XCTAssertEqual(server.readSessionOverlayText(session.id.uuidString, window: nil, options: options).error,
+                       "no overlay to read: the slot holds a hud")
+        XCTAssertTrue(session.hudActive, "a refused read must leave the panel up")
+        XCTAssertEqual(server.copySessionOverlaySelection(session.id.uuidString, window: nil, pane: .left).error,
+                       "no overlay", "the pane-scoped arm reads its own slot, uncoloured by a session hud")
+        XCTAssertTrue(store.closeHud(session.id))
+        XCTAssertEqual(server.copySessionOverlaySelection(session.id.uuidString, window: nil, pane: nil).error,
+                       "no overlay")
+    }
+
     func testOverlayCloseClosesAHudAndRemovesItsBody() throws {
         let (_, session) = try makeHudSession()
         XCTAssertTrue(server.openHud(session.id.uuidString, window: nil, spec: HudSpec(message: "working")).ok)
@@ -509,6 +558,42 @@ final class ControlServerSessionActionsTests: XCTestCase {
         let session = try XCTUnwrap(store.addSession(toWorkspace: owner, cwd: NSHomeDirectory()))
         store.toggleSplit(session.id)
         return (store, session)
+    }
+
+    func testSplitVisibilityDefaultsLeftRightAndAcceptsHorizontalAxis() throws {
+        let store = try XCTUnwrap(library.activeStore)
+        let owner = try XCTUnwrap(store.currentWorkspaceID)
+        let session = try XCTUnwrap(store.addSession(toWorkspace: owner, cwd: NSHomeDirectory()))
+
+        XCTAssertTrue(server.splitSession(session.id.uuidString, window: nil, mode: "on", axis: nil).ok)
+        XCTAssertTrue(session.isSplit)
+        XCTAssertEqual(session.splitAxis, .leftRight)
+
+        XCTAssertTrue(server.splitSession(session.id.uuidString, window: nil, mode: "on", axis: .topBottom).ok)
+        XCTAssertTrue(session.isSplit, "on with another axis transposes rather than hides")
+        XCTAssertEqual(session.splitAxis, .topBottom)
+    }
+
+    func testAxisSpecificControlToggleUsesTheSameHideTransposeMatrixAsTheGui() throws {
+        let store = try XCTUnwrap(library.activeStore)
+        let owner = try XCTUnwrap(store.currentWorkspaceID)
+        let session = try XCTUnwrap(store.addSession(toWorkspace: owner, cwd: NSHomeDirectory()))
+
+        XCTAssertTrue(server.splitSession(session.id.uuidString, window: nil,
+                                          mode: "toggle", axis: .topBottom).ok)
+        XCTAssertTrue(session.isSplit)
+        XCTAssertEqual(session.splitAxis, .topBottom)
+
+        XCTAssertTrue(server.splitSession(session.id.uuidString, window: nil,
+                                          mode: "toggle", axis: .leftRight).ok)
+        XCTAssertTrue(session.isSplit)
+        XCTAssertEqual(session.splitAxis, .leftRight)
+
+        XCTAssertTrue(server.splitSession(session.id.uuidString, window: nil,
+                                          mode: "toggle", axis: .leftRight).ok)
+        XCTAssertFalse(session.isSplit)
+        XCTAssertTrue(session.hasSplit)
+        XCTAssertEqual(session.splitAxis, .leftRight)
     }
 
     func testSplitCloseTearsThePaneDown() throws {

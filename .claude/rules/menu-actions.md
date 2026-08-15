@@ -74,7 +74,7 @@ paths:
   stepping, pane focus, and Dashboard. File UI tests against the menu that owns the item.
 - Workspace focus controls are mode-agnostic because membership applies when tree mode returns.
   Expand/Collapse Workspaces alone are disabled outside tree mode, in both menu and palette.
-- Dashboard uses Command-Shift-D, `BuiltinAction.dashboard`, and `toggleDashboard`; it toggles an MRU,
+- Dashboard uses Command-Shift-G, `BuiltinAction.dashboard`, and `toggleDashboard`; it toggles an MRU,
   auto-sized grid unless terminal zoom is active. Share `dashboardMembers` with control.
 - The View menu carries no fullscreen item of agterm's own, and `toggle_fullscreen` rides the key monitor
   rather than a menu shortcut; see [[windows]]. It remains rebindable and control-drivable.
@@ -104,8 +104,9 @@ paths:
 
 ## Split panes
 
-- `isSplit` means shown side-by-side, `hasSplit` means the second shell exists, and `splitFocused` chooses
-  focus. Split title/cwd feed focus-aware display name and focused cwd based on `splitFocused`, even hidden.
+- `isSplit` means both panes are shown, `hasSplit` means the second shell exists, `splitAxis` chooses
+  left/right or top/bottom, and `splitFocused` chooses focus. Split title/cwd feed focus-aware display name
+  and focused cwd based on `splitFocused`, even hidden.
   `effectiveCwd` remains primary for new panes and `AGTERM_SESSION_PWD`; `activeSurface` follows focus.
 - Creating a split focuses right. Hiding retains both shells and shows the focused pane maximized;
   reshown splits preserve focus. `closePrimaryPane` promotes right into primary with cwd/title/foreground
@@ -114,8 +115,8 @@ paths:
 - Pane focus actions, menu/palette, and `session.focus` gate on `hasSplit`, not `isSplit`, so they also swap
   the maximized hidden pane. Ctrl-1/Ctrl-2 use an app-wide event monitor and always consume these reserved
   keys, even when no split exists.
-- Persist each pane cwd and the 0...1 left-pane `splitRatio`. `SplitRatioAccessor` is an unconditional
-  background representable on primary, introspects `NSSplitView`, retries until width exists, observes
+- Persist each pane cwd and the 0...1 primary-pane `splitRatio`. `SplitRatioAccessor` is an unconditional
+  background representable on primary, introspects `NSSplitView`, retries until its axis extent exists, observes
   `didResizeSubviews`, and debounces save by about 0.4 seconds. Regular saves and quit flush also persist it.
 - Double-clicking the divider restores `splitRatioDefault` through the same `applyRatio` path as
   `session.resize`, persisting immediately rather than through the drag debounce. AppKit offers no hook:
@@ -132,10 +133,12 @@ paths:
   padding lies inside the safe-area band and AppKit expands `NSSplitView` full height; normal 48px mode is
   already bounded. Compute the live overrun and apply a CALayer mask, removing it at zero.
   Do not use SwiftUI mask/clipping because it reflows and loses the terminal's top row; do not use an
-  opaque cover because it breaks translucency. Key `HSplitView` identity by session.
-- Sidebar icon follows `hasSplit`. The titlebar's four-state icon is outline with none,
-  `rectangle.split.2x1.fill` while shown, left-half filled for hidden primary, and right-half filled for
-  hidden split.
+  opaque cover because it breaks translucency. Key each `HSplitView`/`VSplitView` identity by session and
+  keep the terminal surface identities stable when changing axis.
+- Sidebar icon follows `hasSplit` and `splitAxis`. The titlebar has seven accessibility states: `none`,
+  `both`, `left`, and `right` for the left/right symbols, plus `both-horizontal`, `top`, and `bottom` for
+  the top/bottom symbols. A shown split fills both halves; a hidden split fills the visible primary or
+  split half on its current axis.
 
 ## Close and reselection
 
@@ -176,6 +179,12 @@ paths:
   Option-Command-Left/Right remains pane focus.
 - `navigateSession` uses `navigableSessions`, wraps previous/next, selects ends for first/last, chooses
   first on nil/invalid selection, and no-ops when empty. Menu, palette, and `session.go` share it.
+- Previous/Next Workspace are the level above: `navigateWorkspace` steps `currentWorkspaceID` through
+  `visibleWorkspaces` and lands on the target's FIRST session, so the keybind, the palette row and
+  `workspace.go` mean one thing. Keyless, tree mode only, and it reveals a landed pane off the step's
+  captured indicator exactly as plain session nav does. **Collapse is not a navigation filter** —
+  `navigableSessions` and `navigateWorkspace` both ignore `isExpanded`, and adding a term to either would
+  silently rewrite where every existing keystroke, `session.go` call and Ctrl-Tab candidate lands.
 - When selection moves, GUI callers reveal a captured blocked/completed pane; unchanged plain navigation
   only refocuses, preventing a one-item wrap from resetting split focus. Modal focus guards still apply.
 - Attention navigation defaults to Control-Option-Up/Down, includes blocked/completed only, wraps, and

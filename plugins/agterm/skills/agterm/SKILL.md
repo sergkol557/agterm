@@ -19,7 +19,7 @@ when_to_use: >
   Trigger on: agterm, agtermctl, agterm control socket, session.new, session.close, session.type,
   session.split, session.split.close, session.scratch, session.focus, session.resize, surface.zoom, dashboard, pick, pick.open, pick.result, pick.cancel, native picker, session.go, session.copy, session.paste, session.selectall, session.text, session.search, session.status,
   session.flag, session.seen, session.reveal, session.duplicate, session.background, session.overlay,
-  session.hud, hud panel, show a message over a session, workspace.new, workspace.select, workspace.move, workspace.focus, workspace.filter, window.new, window.list,
+  session.hud, hud panel, show a message over a session, workspace.new, workspace.select, workspace.go, workspace.move, workspace.focus, workspace.filter, window.new, window.list,
   window.select, window.resize, window.move, window.zoom, window.fullscreen, window.minimize, quick terminal, sidebar, sidebar.mode, sidebar.expand, sidebar.collapse, flagged, notify, font.inc, keymap.reload, keymap.list, config.reload,
   theme.set, theme.list, events, events.read, event subscription, select theme, edit keymap, show an image, display an image inline, show-image,
   AGTERM_SESSION_ID, AGTERM_SOCKET, and asks to drive or script agterm. Also: troubleshoot agterm,
@@ -148,7 +148,7 @@ prompt concatenates with yours, and the program starts on the merged line. (`--n
 focus, but the newline and shared-buffer hazards of `type`-as-launcher remain — `--command` is still the
 rule.) After `--command`, confirm in `tree --json` that the new node's `foreground` shows your program running, not a bare shell prompt.
 
-## Command summary (75 commands)
+## Command summary
 
 Run `agtermctl <area> <cmd> --help` for exact flags. Full detail in **reference.md**; recipes in
 **examples.md**.
@@ -188,11 +188,12 @@ created by a scheduled job overnight stays unrealized until the displays wake an
 Poll this after an unattended create),
 `hasSplit` (whether a second pane exists at all, shown or hidden; omitted when there is none — read this
 rather than `split`, which is false for a split hidden with ⌘D even though its pane is still alive),
-`splitRatio` (the left-pane divider fraction 0.05–0.95 of a
+`splitAxis` (`vertical` for left/right or `horizontal` for top/bottom; omitted without a split),
+`splitRatio` (the primary-pane divider fraction 0.05-0.95 of a
 session that has a split — shown or hidden; omitted when there's no split or the ratio was never set (at
 the default 0.5) —
 the read side of `session resize`, record it to restore the exact divider), `splitFocused`
-(which pane holds focus in a session that has a split — `true` = split/right, `false` = main/left; omitted
+(which pane holds focus in a session that has a split: `true` = split/right/bottom, `false` = primary/left/top; omitted
 when there's no split; the read side of `session focus`, record it to restore focus), and `surfaces`
 (`id`, `kind`, `active`, `visible`) for `surface zoom`. The tree top level carries `zoomedSurface`
 (the control id of the currently zoomed surface, omitted when nothing is zoomed — the read side of
@@ -215,6 +216,9 @@ rebaselined. There is no terminal-output event stream.
 **workspace** — `new [name] [--collapsed]` (`--collapsed` creates it closed in the sidebar so you can fill
 it with `session new --no-select` without it opening, and keeps it out of the focus set; a plain create
 joins the marked set while the filter is applied, so it is visible) · `rename <name>` · `delete` · `select` ·
+`go --to next|prev` (step the CURRENT workspace one place through the sidebar's visible order, wrapping,
+and select the first session of the one it lands on — relative, so no `--target`, and unaffected by
+whether a workspace is collapsed; `move` REORDERS instead) ·
 `move --to up|down|top|bottom` ·
 `focus [on|off|toggle|add]` (mark ONE workspace in the sidebar's focus set — `on` marks it alone and
 applies the filter, `off` unmarks it, `toggle` (default) replace-toggles, and `add` marks it alongside
@@ -264,6 +268,9 @@ omitted when expanded).
   workspace, so this relocates + positions in one shot, even cross-workspace). For workspace and
   after/before placement, repeat `--target` to move several sessions as one ordered block. Do not repeat
   `--target` with `--to up|down|top|bottom`.
+- Shared pane selectors accept `primary`/`left`/`top` for the primary pane and
+  `split`/`right`/`bottom` for the split pane. Commands supporting scratch also accept `scratch`.
+  Syntax and read-back use canonical `left`/`right`/`scratch`; the invalid-value error keeps those names.
 - `type <text> [--stdin] [--select] [--pane left|right|scratch]` — inject keystrokes (real typing, Enter
   included) into the main pane, the split pane with `--pane right`, or the scratch terminal (even hidden)
   with `--pane scratch`. Pass `--target "$AGTERM_SESSION_ID"` to type into YOUR session, not the user's
@@ -277,18 +284,22 @@ omitted when expanded).
   is the visible screen of the focused pane; `--pane scratch` reads the scratch terminal even while hidden;
   `--all` adds scrollback; `--lines N` keeps the last N lines.
 - `search [needle] [--next|--prev|--close]` — search the terminal scrollback; prints the "N of M" counter.
-- `split [on|off|toggle]` · `split close` — side-by-side second shell. Hide keeps it alive; `close`
-  destroys the pane and whatever runs in it (a nested shell, ssh, an agent), hidden or shown.
+- `split [on|off|toggle] [--axis vertical|horizontal]` · `split close` - second shell, left/right by
+  default or top/bottom with `--axis horizontal`. Omitting `--axis` preserves the current axis and the
+  legacy left/right behavior. The GUI actions are ⌘D for vertical and ⌘⇧D for horizontal; either
+  transposes a shown split of the other orientation. Hide keeps it alive; `close` destroys the pane and
+  whatever runs in it.
 - `scratch [on|off|toggle] [--command CMD]` — full-coverage third shell (hide keeps it alive; `exit`
   recreates). `--command` (when showing) runs a program instead of a shell, run-once like `session new
   --command` (respawns the scratch if one is open). Target your own session with
   `--target "$AGTERM_SESSION_ID"` (see Addressing).
-- `focus [left|right|other]` — move focus between split panes.
-- `resize --split-ratio R | --grow-left D | --grow-right D` — move the split divider (the GUI only drags
+- `focus [primary|split|left|right|top|bottom|other]` - move focus between split panes. Role and position
+  aliases select the same two live terminals; readback remains `left`/`right`.
+- `resize --split-ratio R | --grow-left D | --grow-right D | --grow-primary D | --grow-split D | --grow-top D | --grow-bottom D` - move the split divider (the GUI only drags
   it, or double-clicks it for an even split; bind any other fraction via a
   `command "agtermctl session resize …"` custom action). `--split-ratio` sets
-  the absolute left-pane fraction (0..1, clamped to 0.05..0.95); `--grow-left`/`--grow-right` nudge it by
-  a fraction. Prints the applied (clamped) fraction.
+  the absolute primary-pane fraction (left or top; 0..1, clamped to 0.05..0.95). The grow options are
+  aliases for growing the primary or split pane. Prints the applied fraction.
 - `status <idle|active|completed|blocked> [--blink] [--auto-reset] [--sound NAME] [--color #rrggbb] [--shape SHAPE] [--pane left|right|scratch] [--pane-id TOKEN]` — set the sidebar agent glyph (`--sound default` or a system sound name plays a one-shot sound; `--color` tints the glyph for this call only, reverting on the next status set without it; `--shape` (`circle`, `square`, `triangle`, `diamond`, `capsule`, `star`) picks its silhouette for this call only and reverts the same way, read back as the tree `statusShape` field; `--pane` records which pane set it — `left`=main, `right`=split, `scratch` — so foreground typing in another pane won't clear it and any user-initiated GUI selection (auto-follow, attention-nav ⌃⌥↑/↓, plain session nav, the command palettes, a Dock-menu session, a sidebar row click) reveals that pane when the status needs attention (`blocked`/`completed`); `active` preserves the existing pane selection; the pane reads back as the tree `statusPane` field; the socket `session go next-attention` only steps the selection, it does not itself reveal the pane; `--pane-id` is the hook-forwarded stable surface token (`$AGTERM_PANE_ID`) that resolves the pane's live slot and overrides a stale `--pane` after a promote + re-split — scripts set `--pane` directly and leave `--pane-id` to the hook).
 - `flag [on|off|toggle|clear]` — flag a session for the flagged working-set view (`clear` unflags all).
 - `seen [--target] [--window W]` — clear the session's unseen-notification badge WITHOUT changing the
@@ -318,8 +329,18 @@ omitted when expanded).
 - `overlay open <command> [--cwd DIR] [--wait] [--block] [--size-percent N] [--background-color #rrggbb] [--follow] [--pane left|right]` ·
   `overlay resize (--size-percent N | --full)` ·
   `overlay close [--pane left|right]` ·
-  `overlay result [--pane left|right]` — run a program on top of a session; `--block` waits and exits
-  with its status.
+  `overlay result [--pane left|right]` ·
+  `overlay copy [--pane left|right]` ·
+  `overlay text [--all] [--lines N] [--pane left|right]` — run a program on top of a session; `--block`
+  waits and exits with its status.
+  `overlay copy` returns the selection made INSIDE the overlay and `overlay text` its terminal buffer:
+  `session copy` and `session text` both address the pane the overlay COVERS, so a selection made in the
+  overlay reads there as `no selection` and `session text --pane right` returns the shell underneath.
+  Reach for them when the read is NOT chord-driven — polling from outside, or reading some time after the
+  fact. A chord already gets the firing surface's selection synchronously in `$AGT_SELECTION`, the
+  overlay's included, so a custom command should use that rather than a later socket read.
+  `overlay text` returns a TUI's drawn screen wrapped as rendered — for a program's OUTPUT, still prefer
+  its own output file.
   `overlay resize` changes an ALREADY-OPEN overlay: `--size-percent N` (1-100) makes it a floating panel,
   `--full` switches it back to the full-pane overlay; the program keeps running (no re-spawn).
   `--pane left|right` scopes the overlay to ONE split pane instead of the whole session, leaving the
@@ -407,7 +428,7 @@ composes with the font flags. Read the state back from the tree's top-level `das
 (pane refs `<id>:left`/`<id>:right`, in grid order) / `dashboardHighlighted` (a pane ref) /
 `dashboardFontSize`/`dashboardFontMode`. Zoom and the dashboard are mutually exclusive: opening one CLOSES
 the other. Opening/closing resizes each pane's pty to its cell, so programs may redraw — view-only
-means no input, not no process effect. The most-recently-used grid also has a GUI opener: **⌘⇧D** (the
+means no input, not no process effect. The most-recently-used grid also has a GUI opener: **⌘⇧G** (the
 `dashboard` built-in action), **Navigate ▸ Dashboard**, and the command palette's **Dashboard** entry
 TOGGLE the frontmost window's MRU dashboard auto-sized (identical to `dashboard --mru --auto-size`); no new
 control command, the socket `dashboard` command is unchanged.

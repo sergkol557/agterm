@@ -221,6 +221,15 @@ extension agtermApp {
                     .disabled(!PaletteCommand.expandWorkspaces.isEnabled(in: context))
                 Button { actions.collapseOtherWorkspaces() } label: { Label("Collapse Workspaces", systemImage: "chevron.right") }
                     .disabled(!PaletteCommand.collapseWorkspaces.isEnabled(in: context))
+                // fold the current workspace alone — the one row the two items above never fold, since
+                // Collapse Workspaces keeps it open. keyless, rebindable via toggle_workspace_collapse;
+                // control workspace.collapse/.expand. the label tracks the toggle.
+                Button { actions.toggleActiveWorkspaceCollapse() } label: {
+                    Label(PaletteCommand.toggleWorkspaceCollapse.title(in: context),
+                          systemImage: context.activeWorkspaceCollapsed ? "chevron.down.square" : "chevron.right.square")
+                }
+                .keyboardShortcut(shortcut(for: .toggleWorkspaceCollapse))
+                .disabled(!PaletteCommand.toggleWorkspaceCollapse.isEnabled(in: context))
                 // flip the sidebar between the workspace tree and the flat flagged working-set list. one
                 // 2-state item, keyless by default (rebindable via toggle_flagged_view); control sidebar.mode.
                 // Disabled with nothing to show (tree mode + no flags), live in flagged mode so it can
@@ -268,10 +277,15 @@ extension agtermApp {
                 Button { actions.clearFocus() } label: { Label("Clear Focus", systemImage: "scope") }
                     .disabled(!PaletteCommand.clearFocus.isEnabled(in: context))
                 Button { actions.toggleSplit() } label: {
-                    Label(library.activeStore?.activeSession?.isSplit == true ? "Hide Split" : "Split Right", systemImage: "rectangle.split.2x1")
+                    Label("Toggle Vertical Split", systemImage: "rectangle.split.2x1")
                 }
                 .keyboardShortcut(shortcut(for: .toggleSplit))
                 .disabled(!PaletteCommand.toggleSplit.isEnabled(in: context))
+                Button { actions.toggleHorizontalSplit() } label: {
+                    Label("Toggle Horizontal Split", systemImage: "rectangle.split.1x2")
+                }
+                .keyboardShortcut(shortcut(for: .toggleHorizontalSplit))
+                .disabled(!PaletteCommand.toggleHorizontalSplit.isEnabled(in: context))
                 let scratchShown = library.activeStore?.activeSession?.scratchActive == true
                 Button { actions.toggleScratch() } label: {
                     // static neutral icon like the Split menu item above; state is shown by the label text.
@@ -320,7 +334,7 @@ extension agtermApp {
                     .disabled(!PaletteCommand.showAttention.isEnabled(in: context))
                 Button { actions.toggleDashboard() } label: { Label("Dashboard", systemImage: "rectangle.split.2x2") }
                     .keyboardShortcut(shortcut(for: .dashboard))
-                    // the predicate spares this one the dashboard's own term: ⌘⇧D stays the open grid's
+                    // the predicate spares this one the dashboard's own term: its shortcut stays the open grid's
                     // close escape hatch, while zoom and a topmost native picker still block the toggle.
                     .disabled(!PaletteCommand.dashboard.isEnabled(in: context))
                 Divider()
@@ -347,14 +361,30 @@ extension agtermApp {
                 Button { actions.selectLastSession() } label: { Label("Last Session", systemImage: "arrow.down.to.line") }
                     .keyboardShortcut(shortcut(for: .lastSession))
                     .disabled(!PaletteCommand.lastSession.isEnabled(in: context))
+                // step between WORKSPACES, landing on each one's first session. keyless, rebindable via
+                // previous_workspace/next_workspace; control workspace.go. tree mode only, like the
+                // expansion items in View — flagged mode renders no workspace rows to step through.
+                Button { actions.selectPreviousWorkspace() } label: {
+                    Label("Previous Workspace", systemImage: "chevron.up.2")
+                }
+                .keyboardShortcut(shortcut(for: .previousWorkspace))
+                .disabled(!PaletteCommand.previousWorkspace.isEnabled(in: context))
+                Button { actions.selectNextWorkspace() } label: {
+                    Label("Next Workspace", systemImage: "chevron.down.2")
+                }
+                .keyboardShortcut(shortcut(for: .nextWorkspace))
+                .disabled(!PaletteCommand.nextWorkspace.isEnabled(in: context))
                 Divider()
+                let topBottom = library.activeStore?.activeSession?.splitAxis == .topBottom
                 Button { actions.focusPane(.main) } label: {
-                    Label("Focus Left Pane", systemImage: "rectangle.lefthalf.filled")
+                    Label(topBottom ? "Focus Top Pane" : "Focus Left Pane",
+                          systemImage: topBottom ? "rectangle.tophalf.filled" : "rectangle.lefthalf.filled")
                 }
                 .keyboardShortcut(shortcut(for: .focusLeftPane))
                 .disabled(!PaletteCommand.focusLeftPane.isEnabled(in: context))
                 Button { actions.focusPane(.split) } label: {
-                    Label("Focus Right Pane", systemImage: "rectangle.righthalf.filled")
+                    Label(topBottom ? "Focus Bottom Pane" : "Focus Right Pane",
+                          systemImage: topBottom ? "rectangle.bottomhalf.filled" : "rectangle.righthalf.filled")
                 }
                 .keyboardShortcut(shortcut(for: .focusRightPane))
                 .disabled(!PaletteCommand.focusRightPane.isEnabled(in: context))

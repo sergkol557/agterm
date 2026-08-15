@@ -140,8 +140,8 @@ the pane you duplicated from.
 ws=$(agtermctl workspace new "build" --json | jq -r '.result.id')
 a=$(agtermctl session new --workspace "$ws" --cwd "$HOME/proj" --json | jq -r '.result.id')
 agtermctl session rename "server" --target "$a"
-agtermctl session split on --target "$a"          # second shell side by side
-agtermctl session resize --split-ratio 0.7 --target "$a"   # left pane gets 70% (prints 0.700)
+agtermctl session split on --axis horizontal --target "$a" # second shell below the primary
+agtermctl session resize --split-ratio 0.7 --target "$a"   # top pane gets 70% (prints 0.700)
 b=$(agtermctl session new --workspace "$ws" --json | jq -r '.result.id')
 agtermctl session rename "logs" --target "$b"
 ```
@@ -235,6 +235,33 @@ Manual open + poll for status instead of `--block`:
 agtermctl session overlay open "make test" --target "$AGTERM_SESSION_ID"   # this session
 agtermctl session overlay result --json   # errors "still running" until it exits, then result.exitCode
 ```
+
+## Read what the user highlighted inside an overlay
+
+`session copy` and `session text` address the pane the overlay COVERS, so a selection the user made in
+the overlay reads as `no selection` there and `session text --pane right` returns the shell underneath.
+`session overlay copy`/`text` read the covering surface instead:
+
+```bash
+agtermctl session overlay copy --target "$AGTERM_SESSION_ID" --json   # result.text = the overlay's selection
+agtermctl session overlay text --target "$AGTERM_SESSION_ID" --lines 40
+```
+
+Both take the overlay family's `--pane left|right` for a pane-scoped overlay; omit it for the
+session-wide one.
+
+A chord bound to a custom command gets this for free — `$AGT_SELECTION` already carries the selection of
+the surface the chord fired in, the overlay included, while `$AGT_PANE` keeps naming the pane underneath
+so the reply routes back with `session type --pane`:
+
+```bash
+# keymap.conf: command "note" ctrl+a>n ...
+printf '%s' "$AGT_SELECTION" > /tmp/note.txt
+agtermctl session type "see /tmp/note.txt" --target "$AGT_SESSION_ID" --pane "$AGT_PANE"
+```
+
+Reach for `session overlay copy` when the read is NOT chord-driven — an agent polling from outside, or a
+script that needs the selection some time after the fact.
 
 ## Cover only your own pane, leaving the user's other pane usable
 
@@ -669,7 +696,7 @@ suffix, capped at 9 cells total. No cell takes input:
 the keyboard navigates a highlight (arrows), Enter jumps into the highlighted session AND focuses that
 exact pane then closes, Esc closes. Open it over the socket with explicit session ids, or with `--mru` to
 pull the window's most-recently-used sessions automatically. The most-recently-used grid also has a built-in
-opener — **⌘⇧D** (the `dashboard` action), **Navigate ▸ Dashboard**, or the command palette's **Dashboard**
+opener: **⌘⇧G** (the `dashboard` action), **Navigate ▸ Dashboard**, or the command palette's **Dashboard**
 toggle it auto-sized (the `dashboard --mru --auto-size` equivalent), so the recent-sessions view needs no
 script for the common case.
 
@@ -707,7 +734,7 @@ agtermctl tree --json | jq '.result.tree | {dashboardMembers, dashboardHighlight
 agtermctl dashboard --close
 ```
 
-The MRU grid is already on **⌘⇧D** (the built-in `dashboard` action) — rebind that chord in `keymap.conf`
+The MRU grid is already on **⌘⇧G** (the built-in `dashboard` action). Rebind that chord in `keymap.conf`
 with `map <chord> dashboard`. To dashboard a FIXED set of explicit ids instead, bind a `keymap.conf` custom
 action (then `agtermctl keymap reload`):
 
@@ -832,6 +859,8 @@ a RUNNING program is refused instead: a message is replaceable, a program is not
 ```bash
 agtermctl session go --to next            # step selection to the next session
 agtermctl session go --to next-attention  # jump to the next blocked/completed session
+agtermctl workspace go --to next          # step a whole workspace, landing on its first session
+agtermctl workspace go --to prev          # wraps at both ends; no --target, it is relative
 w=$(agtermctl window new "scratch" --json | jq -r '.result.id')
 # or park one in the Dock right after creating it (it appears briefly on its way there):
 # p=$(agtermctl window new "proj-b" --minimized --json | jq -r '.result.id')
